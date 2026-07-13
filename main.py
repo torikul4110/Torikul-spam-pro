@@ -1,0 +1,2907 @@
+import os, sys, time, json, ssl, socket, threading, asyncio, base64, binascii, re, jwt, pickle, random
+from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
+from threading import Thread
+from flask import Flask, request, jsonify, render_template_string, session, redirect, url_for, Response, stream_with_context
+from functools import wraps
+import requests
+import urllib3
+from Pb2 import MajoRLoGinrEq_pb2, xKEys
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad, unpad
+from google.protobuf.timestamp_pb2 import Timestamp
+from google_play_scraper import app as play_store_info 
+import aiohttp
+
+from xC4 import *
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# ==================== LOGIN CONFIG ====================
+ADMIN_PASSWORD = "TORIKULJOD"
+SECRET_KEY = "mahir_system_secret_key_2024"
+
+# ==================== ফ্লাস্ক অ্যাপ ====================
+app = Flask(__name__)
+app.secret_key = SECRET_KEY
+
+# ==================== LOGIN REQUIRED DECORATOR ====================
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get('logged_in'):
+            return redirect(url_for('login_page'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+# ==================== গ্লোবাল ভেরিয়েবল ====================
+connected_clients = {}
+connected_clients_lock = threading.Lock()
+active_spam_targets = {}
+active_spam_lock = threading.Lock()
+spam_threads = {}
+spam_threads_lock = threading.Lock()
+target_status_cache = {}
+squad_targets = {}
+SQUAD_JOIN_DURATION = 30 * 60
+STATUS_CHECK_INTERVAL = 1
+ACCOUNT_REFRESH_INTERVAL = 10 * 60
+
+ACCOUNTS_FILE = "accs.txt"
+SQUAD_DATA_FILE = "squad_data.json"
+TARGETS_PASSWORD = "HUNTERTORIKUL"
+is_resetting = False  # রিসেট চলছে কিনা ট্র্যাক করার জন্য
+
+C = "\033[96m"
+G = "\033[92m"
+Y = "\033[93m"
+R = "\033[91m"
+RS = "\033[0m"
+BOLD = "\033[1m"
+
+BADGES = {
+    "V_BADGE": 32768,
+    "PRO_BADGE": 262144,
+    "CRAFTLAND": 1048576,
+    "MODERATOR": 2048,
+    "SMALL_V": 64,
+}
+
+# ================================================================
+# 🔄 LIVE UPDATE SYSTEM
+# ================================================================
+
+def AuToUpDaTE():
+    try:
+        print("\033[96m🌐 Fetching live version from Play Store...\033[0m")
+        data = play_store_info('com.dts.freefireth', lang="fr", country='CA')
+        store_version = data.get("version")
+
+        if not store_version:
+            print("\033[91m❌ Critical Error: Could not detect Play Store version!\033[0m")
+            sys.exit(1)
+
+        api_url = f"https://version.ggwhitehawk.com/live/ver.php?version={store_version}&lang=fr&device=android&channel=android"
+        r = requests.get(api_url, timeout=15)
+        
+        if r.status_code != 200:
+            print(f"\033[91m❌ Server Error: API returned status {r.status_code}\033[0m")
+            sys.exit(1)
+
+        json_data = r.json()
+        login_url = json_data.get('server_url')
+        ob_version = json_data.get('latest_release_version')
+        remote_patch_ver = json_data.get('remote_version')
+
+        if not all([login_url, ob_version, remote_patch_ver]):
+            print("\033[91m❌ Error: API response is missing critical data!\033[0m")
+            sys.exit(1)
+
+        return login_url, ob_version, remote_patch_ver, store_version
+
+    except Exception as e:
+        print(f"\033[91m❌ Update System Failure: {e}\033[0m")
+        sys.exit(1)
+
+try:
+    temp_url, temp_ob, temp_remote, temp_store = AuToUpDaTE()
+    
+    DYNAMIC_SERVER_URL = temp_url.rstrip('/')
+    CURRENT_OB = temp_ob
+    FREEFIRE_VERSION_NAME = temp_remote  
+    STORE_VERSION = temp_store           
+
+    print(f"""
+\033[1;92m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚀 LIVE DATA LOADED (STRICT MODE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📦 Current OB         : \033[1;97m{CURRENT_OB}\033[1;92m
+🛒 Play Store Version : \033[1;97m{STORE_VERSION}\033[1;92m
+🎮 Remote Version     : \033[1;97m{FREEFIRE_VERSION_NAME}\033[1;92m
+🌐 Dynamic Server     : \033[1;97m{DYNAMIC_SERVER_URL}\033[1;92m
+
+✅ System is ready with latest patch info.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\033[0m""")
+
+except Exception as e:
+    print(f"\033[91m❌ Execution Error: {e}\033[0m")
+    sys.exit(1)
+
+# ==================== FILE LOADERS ====================
+def load_unified_accounts(filename="accs.txt"):
+    all_accounts = []
+    processed_list = []
+    
+    try:
+        if not os.path.exists(filename):
+            with open(filename, "w") as f:
+                f.write("# Format: UID:PASSWORD\n")
+            return []
+
+        with open(filename, "r", encoding="utf-8") as file:
+            for line in file:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    if ":" in line:
+                        parts = line.split(":")
+                        uid, pwd = parts[0].strip(), parts[1].strip()
+                    else:
+                        uid, pwd = line.strip(), ""
+                    
+                    if uid.isdigit():
+                        processed_list.append({'id': uid, 'password': pwd})
+        
+        for i, acc in enumerate(processed_list):
+            acc_type = 'group' if (i % 10) < 4 else 'room'
+            acc['type'] = acc_type
+            all_accounts.append(acc)
+            
+        group_count = len([a for a in all_accounts if a['type'] == 'group'])
+        room_count = len([a for a in all_accounts if a['type'] == 'room'])
+        
+        print(f"{G}📦 Total Loaded: {len(all_accounts)} (Group: {group_count}, Room: {room_count}){RS}")
+    except Exception as e:
+        print(f"{R}❌ Error loading accounts: {e}{RS}")
+    
+    return all_accounts
+
+ACCOUNTS = load_unified_accounts("accs.txt")
+
+def save_target_to_file(uid):
+    try:
+        uids = []
+        if os.path.exists("target.txt"):
+            with open("target.txt", "r") as f:
+                uids = [line.strip() for line in f.readlines()]
+        
+        if uid not in uids:
+            with open("target.txt", "a") as f:
+                f.write(f"{uid}\n")
+    except Exception as e:
+        print(f"{R}❌ Error saving target to file: {e}{RS}")
+
+def remove_target_from_file(uid):
+    try:
+        if not os.path.exists("target.txt"):
+            return
+        with open("target.txt", "r") as f:
+            lines = f.readlines()
+        with open("target.txt", "w") as f:
+            for line in lines:
+                if line.strip() != str(uid):
+                    f.write(line)
+    except Exception as e:
+        print(f"{R}❌ Error removing target from file: {e}{RS}")
+
+def load_saved_targets():
+    if os.path.exists("target.txt"):
+        with open("target.txt", "r") as f:
+            for line in f:
+                uid = line.strip()
+                if uid.isdigit():
+                    start_spam(uid, 'full')
+
+# ==================== STATUS CHECKER ====================
+_ID = '4210668421'
+_PW = 'JOBAYAR-AWXC0UIUO-MODX'
+_TTL = 6 * 60 * 60
+_cx = {}
+_lk = threading.Lock()
+
+_Hr = {
+    'User-Agent': 'Dalvik/2.1.0 (Linux; U; Android 9; G011A Build/PI)',
+    'Connection': 'Keep-Alive',
+    'Accept-Encoding': 'gzip',
+    'Content-Type': 'application/x-www-form-urlencoded',
+    'Expect': '100-continue',
+    'X-Unity-Version': '2018.4.11f1',
+    'X-GA': 'v1 1',
+    'ReleaseVersion': CURRENT_OB,
+}
+
+async def encrypted_proto(data_bytes):
+    key = b'Yg&tc%DEuh6%Zc^8'
+    iv = b'6oyZDr22E3ychjM%'
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    return cipher.encrypt(pad(data_bytes, 16))
+
+async def EncRypTMajoRLoGin(open_id, access_token, version):
+    major_login = MajoRLoGinrEq_pb2.MajorLogin()
+    major_login.event_time = str(datetime.now())[:-7]
+    major_login.game_name = "free fire"
+    major_login.platform_id = 2
+    major_login.client_version = FREEFIRE_VERSION_NAME
+    major_login.client_version_code = "2024010012"
+    major_login.system_software = "Android OS 11 / API-30 (RQ3A.210805.001)"
+    major_login.system_hardware = "Handheld"
+    major_login.device_type = "Handheld"
+    major_login.telecom_operator = "Verizon"
+    major_login.network_operator_a = "Verizon"
+    major_login.network_type = "WIFI"
+    major_login.network_type_a = "WIFI"
+    major_login.screen_width = 1080
+    major_login.screen_height = 2400
+    major_login.screen_dpi = "440"
+    major_login.processor_details = "ARMv8"
+    major_login.memory = 6144
+    major_login.gpu_renderer = "Adreno (TM) 650"
+    major_login.gpu_version = "OpenGL ES 3.2 V@1.50"
+    major_login.graphics_api = "OpenGLES3"
+    major_login.unique_device_id = "Google|34a7dcdf-a7d5-4cb6-8d7e-3b0e448a0c57"
+    major_login.language = "en"
+    major_login.open_id = open_id
+    major_login.open_id_type = "4"
+    major_login.login_open_id_type = 4
+    major_login.access_token = access_token
+    major_login.login_by = 3
+    major_login.platform_sdk_id = 2
+    major_login.origin_platform_type = "4"
+    major_login.primary_platform_type = "4"
+    
+    major_login.memory_available.version = 55
+    major_login.memory_available.hidden_value = 81
+    
+    major_login.external_storage_total = 128512
+    major_login.external_storage_available = random.randint(38000, 52000)
+    major_login.internal_storage_total = 110731
+    major_login.internal_storage_available = random.randint(18000, 32000)
+    major_login.game_disk_storage_total = 26628
+    major_login.game_disk_storage_available = random.randint(18000, 25000)
+    major_login.external_sdcard_total_storage = 119234
+    major_login.external_sdcard_avail_storage = random.randint(25000, 60000)
+    major_login.library_path = "/data/app/~~random/base.apk"
+    major_login.library_token = "hash|base.apk"
+    major_login.client_using_version = "7428b253defc164018c604a1ebbfebdf"
+    major_login.supported_astc_bitset = 16383
+    major_login.analytics_detail = b"FwQVTgUPX1UaUllDDwcWCRBpWAUOUgsvA1snWlBaO1kFYg=="
+    major_login.loading_time = random.randint(9000, 18000)
+    major_login.release_channel = "android"
+    major_login.if_push = 1
+    major_login.is_vpn = 0
+    major_login.cpu_type = 2
+    major_login.cpu_architecture = "64"
+    major_login.android_engine_init_flag = 110009
+
+    serialized_data = major_login.SerializeToString()
+    return await encrypted_proto(serialized_data)
+
+def _rdVr(data, pos):
+    n = 0; sh = 0
+    while True:
+        b = data[pos]; pos += 1
+        n |= (b & 0x7F) << sh; sh += 7
+        if not b & 0x80: break
+    return n, pos
+
+def _pbF(data):
+    out = {}; pos = 0
+    while pos < len(data):
+        try:
+            tag, pos = _rdVr(data, pos)
+            fn = tag >> 3; wt = tag & 0x7
+            if wt == 0:
+                v, pos = _rdVr(data, pos); out[fn] = v
+            elif wt == 2:
+                ln, pos = _rdVr(data, pos); out[fn] = data[pos:pos+ln]; pos += ln
+            elif wt == 1:
+                out[fn] = data[pos:pos+8]; pos += 8
+            elif wt == 5:
+                out[fn] = data[pos:pos+4]; pos += 4
+            else: break
+        except: break
+    return out
+
+async def _vr(n):
+    h = []
+    while True:
+        b = n & 0x7F; n >>= 7
+        if n: b |= 0x80
+        h.append(b)
+        if not n: break
+    return bytes(h)
+
+async def _enc(hx, k, v):
+    return AES.new(k, AES.MODE_CBC, v).encrypt(pad(bytes.fromhex(hx), 16)).hex()
+
+async def _hx(n):
+    f = hex(n)[2:]
+    return ('0' + f) if len(f) == 1 else f
+
+async def _pb(flds):
+    async def _var(fn, val): return await _vr((fn << 3) | 0) + await _vr(val)
+    async def _len(fn, val):
+        e = val.encode() if isinstance(val, str) else val
+        return await _vr((fn << 3) | 2) + await _vr(len(e)) + e
+    
+    p = bytearray()
+    for f, v in flds.items():
+        if isinstance(v, dict): p.extend(await _len(f, await _pb(v)))
+        elif isinstance(v, int): p.extend(await _var(f, v))
+        elif isinstance(v, (str, bytes)): p.extend(await _len(f, v))
+    return p
+
+async def _pk(px, n, k, v):
+    e = await _enc(px, k, v)
+    _ = await _hx(len(e) // 2)
+    m = {2:'000000', 3:'00000', 4:'0000', 5:'000'}
+    return bytes.fromhex(n + m.get(len(_), '000000') + _ + e)
+
+async def _fix(rs):
+    d = {}
+    for r in rs:
+        fd = {'wire_type': r.wire_type}
+        if r.wire_type in ('varint', 'string', 'bytes'): fd['data'] = r.data
+        elif r.wire_type == 'length_delimited': fd['data'] = await _fix(r.data.results)
+        d[r.field] = fd
+    return d
+
+async def _parse(hx):
+    try: 
+        from protobuf_decoder.protobuf_decoder import Parser
+        return json.dumps(await _fix(Parser().parse(hx)))
+    except: return None
+
+async def _stPkt(uid, k, v):
+    ue = (await _pb({1: int(uid)})).hex()[2:]
+    return await _pk(f"080112090A05{ue}1005", '0F15', k, v)
+
+async def _rmPkt(ruid, k, v):
+    return await _pk((await _pb({1: 1, 2: {1: ruid, 3: {}, 4: 1, 6: 'en'}})).hex(), '0E15', k, v)
+
+def _tdiff(ts):
+    d = int((datetime.now() - datetime.fromtimestamp(ts)).total_seconds())
+    return f"{(abs(d) % 3600) // 60:02}:{abs(d) % 60:02}"
+
+def _pStatus(pkt):
+    data = json.loads(pkt)
+    if '5' not in data or 'data' not in data['5']: return {'status': 'OFFLINE'}
+    jd = data['5']['data']
+    if '1' not in jd or 'data' not in jd['1']: return {'status': 'OFFLINE'}
+    d = jd['1']['data']
+    if '3' not in d or 'data' not in d['3']: return {'status': 'OFFLINE'}
+    st = d['3']['data']
+    gc = d.get('9', {}).get('data', 0)
+    cm = d.get('10', {}).get('data', 0) + 1 if '10' in d else 0
+    go = d.get('8', {}).get('data', 0)
+    tg = d.get('4', {}).get('data', 0)
+    m5 = d.get('5', {}).get('data')
+    m6 = d.get('6', {}).get('data')
+    mn = sc = 0
+    if tg:
+        a, b = _tdiff(tg).split(':'); mn = int(a); sc = int(b)
+    if st == 4:
+        return {'status': 'IN_ROOM', 'room_uid': d.get('15', {}).get('data'),
+                'players': f"{d.get('17',{}).get('data',0)}/{d.get('18',{}).get('data',0)}",
+                'room_owner': d.get('1', {}).get('data')}
+    base = {1:'SOLO', 2:'INSQUAD', 3:'INGAME', 5:'INGAME', 7:'MATCHMAKING', 6:'SOCIAL_ISLAND'}.get(st, 'OFFLINE')
+    mode = None
+    f14 = d.get('14', {}).get('data')
+    if f14 == 1: mode = 'TRAINING'
+    elif f14 == 2: mode = 'SOCIAL_ISLAND'
+    mm = {(2,1):'BR_RANK',(5,23):'TRAINING',(6,15):'CS_RANK',(1,43):'LONE_WOLF',
+          (1,1):'BERMUDA',(1,15):'CLASH_SQUAD',(1,29):'CONVOY_CRUNCH',(1,61):'FREE_FOR_ALL'}
+    if (m5, m6) in mm: mode = mm[(m5, m6)]
+    res = {'status': base, 'mode': mode}
+    if base == 'INSQUAD':
+        res['squad_owner'] = str(go)
+        res['squad_size'] = f"{gc}/{cm}" if gc else None
+    if base in ('INGAME', 'INSQUAD') and tg:
+        res['time_playing'] = f"{mn}m {sc}s"
+    return res
+
+def _pRoom(pkt):
+    data = json.loads(pkt)
+    rd = data['5']['data']['1']['data']
+    mm = {1:'BERMUDA',201:'BATTLE_CAGE',15:'CLASH_SQUAD',43:'LONE_WOLF',3:'RUSH_HOUR',27:'BOMB_SQUAD_5V5',24:'DEATH_MATCH'}
+    return {
+        'room_id': int(rd['1']['data']),
+        'room_name': rd['2']['data'],
+        'owner_uid': int(rd['37']['data']['1']['data']),
+        'mode': mm.get(rd.get('4', {}).get('data'), 'UNKNOWN'),
+        'players': f"{rd.get('6',{}).get('data',0)}/{rd.get('7',{}).get('data',0)}",
+        'spectators': rd.get('9', {}).get('data', 0),
+        'emulator': bool(rd.get('17', {}).get('data', 1)),
+    }
+
+async def _rAll(reader, timeout=5):
+    buf = b''
+    while True:
+        try: chunk = await asyncio.wait_for(reader.read(65536), timeout=timeout)
+        except asyncio.TimeoutError: break
+        if not chunk: break
+        buf += chunk
+    return buf
+
+async def _scan(buf, k, v):
+    h = buf.hex()
+    for mk, pt in [('0f00','0f'),('0e00','0e')]:
+        i = h.find(mk)
+        if i != -1 and i % 2 == 0: return pt, h[i + 10:]
+    if len(buf) > 5:
+        pl = buf[5:]; pl = pl[:len(pl) - (len(pl) % 16)]
+        if len(pl) >= 16:
+            try:
+                dc = unpad(AES.new(k, AES.MODE_CBC, v).decrypt(pl), 16).hex()
+                for mk, pt in [('0f00','0f'),('0e00','0e')]:
+                    i = dc.find(mk)
+                    if i != -1 and i % 2 == 0: return pt, dc[i + 10:]
+            except: pass
+    return None, None
+
+async def _auth(uid, tok, ts, k, v):
+    uh = hex(uid)[2:]
+    hd = {9:'0000000',8:'00000000',10:'000000',7:'000000000'}.get(len(uh),'0000000')
+    e = await _enc(tok.encode().hex(), k, v)
+    el = await _hx(len(e) // 2)
+    return f"0115{hd}{uh}{await _hx(ts)}00000{el}{e}"
+
+def get_session_sync():
+    result = None
+    def _run():
+        nonlocal result
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(_login())
+        except Exception as e:
+            print(f"{R}❌ Login error: {e}{RS}")
+        finally:
+            loop.close()
+    
+    thread = Thread(target=_run, daemon=True)
+    thread.start()
+    thread.join(timeout=20)
+    return result
+
+def _sess():
+    with _lk:
+        s = _cx.get('s')
+        if s and time.time() < s['exp']:
+            return s
+    
+    ns = get_session_sync()
+    if ns:
+        with _lk:
+            _cx['s'] = ns
+        return ns
+    return None
+
+async def _login():
+    sx = ssl.create_default_context()
+    sx.check_hostname = False
+    sx.verify_mode = ssl.CERT_NONE
+
+    async with aiohttp.ClientSession() as s:
+        async with s.post('https://100067.connect.garena.com/oauth/guest/token/grant', headers=_Hr,
+            data={'uid':_ID,'password':_PW,'response_type':'token','client_type':'2',
+                  'client_secret':'2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3',
+                  'client_id':'100067'}, ssl=sx) as r:
+            if r.status != 200:
+                raise Exception(f"OAuth {r.status}")
+            d = await r.json()
+            oid = d['open_id']
+            atk = d['access_token']
+
+    ep = await EncRypTMajoRLoGin(oid, atk, _Hr['ReleaseVersion'])
+
+    async with aiohttp.ClientSession() as s:
+        async with s.post(f"{DYNAMIC_SERVER_URL}/MajorLogin", data=ep, headers=_Hr, ssl=sx) as r:
+            if r.status != 200:
+                raise Exception(f"MajorLogin {r.status}")
+            mr = await r.read()
+
+    mlr = _pbF(mr)
+    tok = mlr[8].decode()
+    tgt = mlr[1]
+    k = mlr[22]
+    v = mlr[23]
+    ts = mlr[21]
+    url = mlr[10].decode()
+
+    h2 = {**_Hr, 'Authorization': f'Bearer {tok}'}
+    async with aiohttp.ClientSession() as s:
+        async with s.post(f"{url}/GetLoginData", data=ep, headers=h2, ssl=sx) as r:
+            if r.status != 200:
+                raise Exception(f"GetLoginData {r.status}")
+            lr = await r.read()
+
+    ld = _pbF(lr)
+    ip, port = ld[14].decode().split(':')
+    at = await _auth(int(tgt), tok, int(ts), k, v)
+    return {'account_id': tgt, 'token': tok, 'key': k, 'iv': v, 'ip': ip, 'port': int(port), 'auth': at, 'exp': time.time()+_TTL}
+
+async def check_target_status_async(uid):
+    try:
+        sx = _sess()
+        if not sx:
+            return {'status': 'ERROR', 'error': 'No session'}
+        
+        rd, wr = await asyncio.open_connection(sx['ip'], sx['port'])
+        try:
+            wr.write(bytes.fromhex(sx['auth']))
+            await wr.drain()
+            await _rAll(rd, timeout=3)
+            pkt = await _stPkt(uid, sx['key'], sx['iv'])
+            wr.write(pkt)
+            await wr.drain()
+            buf = await _rAll(rd, timeout=5)
+            if not buf:
+                return {'status': 'NO_RESPONSE'}
+            pt, pl = await _scan(buf, sx['key'], sx['iv'])
+            if pt == '0f':
+                raw = await _parse(pl)
+                if not raw:
+                    return {'status': 'PARSE_ERROR'}
+                info = _pStatus(raw)
+                if info.get('status') == 'IN_ROOM':
+                    wr.write(await _rmPkt(int(info['room_uid']), sx['key'], sx['iv']))
+                    await wr.drain()
+                    rb = await _rAll(rd, timeout=5)
+                    if rb:
+                        rt, rp = await _scan(rb, sx['key'], sx['iv'])
+                        if rt == '0e':
+                            rr = await _parse(rp)
+                            if rr:
+                                info['room_info'] = _pRoom(rr)
+                return info
+            elif pt == '0e':
+                raw = await _parse(pl)
+                return _pRoom(raw) if raw else {'status': 'PARSE_ERROR'}
+            return {'status': 'UNKNOWN'}
+        finally:
+            wr.close()
+            try:
+                await wr.wait_closed()
+            except:
+                pass
+    except Exception as e:
+        return {'status': 'ERROR', 'error': str(e)}
+
+def check_target_status_sync(uid):
+    result = {'status': 'ERROR'}
+    
+    def _run():
+        nonlocal result
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(check_target_status_async(uid))
+        except Exception as e:
+            result = {'status': 'ERROR', 'error': str(e)}
+        finally:
+            loop.close()
+    
+    thread = Thread(target=_run, daemon=True)
+    thread.start()
+    thread.join(timeout=15)
+    return result
+
+# ==================== PACKET CREATION FUNCTIONS ====================
+def create_badge_join_packet(key, iv, target_uid, badge_value, region="BD"):
+    try:
+        avatar_ids = [
+            902000011, 902000013, 902047016, 902049015,
+            902000154, 902000127, 902000207, 902000305,        
+            902037031, 902042011, 902053016, 902053018
+        ]
+        selected_avatar = random.choice(avatar_ids)
+
+        proto_fields = {
+            1: 33,
+            2: {
+                1: int(target_uid),
+                2: region.upper(),
+                3: 1,
+                4: 1,
+                5: bytes([1, 7, 9, 10, 11, 18, 25, 26, 32]),
+                6: "[C][B][FF0000] TORIKUL BADGE",
+                7: 330,
+                8: 1000,
+                10: region.upper(),
+                11: bytes.fromhex("61" * 32),
+                12: 1,
+                13: int(target_uid),
+                14: {
+                    1: random.randint(1000000000, 9999999999),
+                    2: 8,
+                    3: "\u0010\u0015\b\n\u000b\u0013\f\u000f\u0011\u0004\u0007\u0002\u0003\r\u000e\u0012\u0001\u0005\u0006"
+                },
+                16: 1,
+                17: 1,
+                18: 312,
+                19: 46,
+                23: bytes([16, 1, 24, 1]),
+                24: selected_avatar,
+                26: "",
+                28: "",
+                31: {1: 1, 2: badge_value},
+                32: badge_value,
+                34: {
+                    1: int(target_uid),
+                    2: 8,
+                    3: bytes([15, 6, 21, 8, 10, 11, 19, 12, 17, 4, 14, 20, 7, 2, 1, 5, 16, 3, 13, 18])
+                }
+            },
+            10: "en",
+            13: {2: 1, 3: 1}
+        }
+        
+        packet = create_proto_sync(proto_fields).hex()
+        
+        if region.lower() == "ind":
+            packet_type = "0514"
+        elif region.lower() == "bd":
+            packet_type = "0519"
+        else:
+            packet_type = "0515"
+        
+        encrypted = EnC_PacKeT(packet, key, iv)
+        length = len(encrypted) // 2
+        len_hex = DecodE_HeX(length)
+        padding_map = {2: "000000", 3: "00000", 4: "0000", 5: "000"}
+        padding = padding_map.get(len(len_hex), "000")
+        
+        return bytes.fromhex(packet_type + padding + len_hex + encrypted)
+    except Exception as e:
+        print(f"{R}❌ Badge join packet error: {e}{RS}")
+        return None
+
+def encode_varint_sync(value: int) -> bytes:
+    result = bytearray()
+    while True:
+        byte = value & 0x7F
+        value >>= 7
+        if value:
+            byte |= 0x80
+        result.append(byte)
+        if not value:
+            break
+    return bytes(result)
+
+def create_proto_sync(fields):
+    packet = bytearray()
+    
+    for field, value in fields.items():
+        field_num = int(field)
+        
+        if isinstance(value, dict):
+            nested = create_proto_sync(value)
+            packet.extend(encode_varint_sync((field_num << 3) | 2))
+            packet.extend(encode_varint_sync(len(nested)))
+            packet.extend(nested)
+        elif isinstance(value, int):
+            packet.extend(encode_varint_sync((field_num << 3) | 0))
+            packet.extend(encode_varint_sync(value))
+        elif isinstance(value, str):
+            data = value.encode('utf-8')
+            packet.extend(encode_varint_sync((field_num << 3) | 2))
+            packet.extend(encode_varint_sync(len(data)))
+            packet.extend(data)
+        elif isinstance(value, bytes):
+            packet.extend(encode_varint_sync((field_num << 3) | 2))
+            packet.extend(encode_varint_sync(len(value)))
+            packet.extend(value)
+            
+    return bytes(packet)
+
+def create_squad_invite_packet(key, iv, target_uid, region="BD"):
+    try:
+        fields = {1: 2, 2: {1: int(target_uid), 2: region.upper(), 4: 5}}
+        packet = create_proto_sync(fields).hex()
+        encrypted = EnC_PacKeT(packet, key, iv)
+        length = len(encrypted) // 2
+        len_hex = DecodE_HeX(length)
+        padding_map = {2: "000000", 3: "00000", 4: "0000", 5: "000"}
+        padding = padding_map.get(len(len_hex), "000")
+        
+        if region.lower() == "ind":
+            packet_type = "0514"
+        elif region.lower() == "bd":
+            packet_type = "0519"
+        else:
+            packet_type = "0515"
+        
+        return bytes.fromhex(packet_type + padding + len_hex + encrypted)
+    except Exception as e:
+        print(f"{R}❌ Squad invite packet error: {e}{RS}")
+        return None
+
+def create_open_squad_packet(key, iv, region="BD"):
+    try:
+        fields = {
+            1: 1,
+            2: {
+                2: "\u0001",
+                3: 2,
+                4: 1,
+                5: "en",
+                9: 1,
+                11: 1,
+                13: 1,
+                14: {
+                    1: 1,
+                    2: 1393,
+                    6: 11,
+                    8: FREEFIRE_VERSION_NAME,
+                    9: 2,
+                    10: 4
+                }
+            }
+        }
+        packet = create_proto_sync(fields).hex()
+        encrypted = EnC_PacKeT(packet, key, iv)
+        length = len(encrypted) // 2
+        len_hex = DecodE_HeX(length)
+        padding_map = {2: "000000", 3: "00000", 4: "0000", 5: "000"}
+        padding = padding_map.get(len(len_hex), "000")
+        
+        if region.lower() == "ind":
+            packet_type = "0514"
+        elif region.lower() == "bd":
+            packet_type = "0519"
+        else:
+            packet_type = "0515"
+        
+        return bytes.fromhex(packet_type + padding + len_hex + encrypted)
+    except Exception as e:
+        print(f"\033[91m❌ Open squad packet error: {e}\033[0m")
+        return None
+
+def create_change_squad_size_packet(key, iv, target_uid, region="BD"):
+    try:
+        fields = {
+            1: 17,
+            2: {
+                1: int(target_uid),
+                2: 1,
+                3: 2,
+                4: 1,
+                5: "\x1a",
+                8: 12,
+                13: 330
+            }
+        }
+        packet = create_proto_sync(fields).hex()
+        encrypted = EnC_PacKeT(packet, key, iv)
+        length = len(encrypted) // 2
+        len_hex = DecodE_HeX(length)
+        padding_map = {2: "000000", 3: "00000", 4: "0000", 5: "000"}
+        padding = padding_map.get(len(len_hex), "000")
+        
+        if region.lower() == "ind":
+            packet_type = "0514"
+        elif region.lower() == "bd":
+            packet_type = "0519"
+        else:
+            packet_type = "0515"
+        
+        return bytes.fromhex(packet_type + padding + len_hex + encrypted)
+    except Exception as e:
+        print(f"{R}❌ Change squad size packet error: {e}{RS}")
+        return None
+
+# ==================== SPAM WORKER FUNCTIONS ====================
+def send_room_badge_spam(client, target_uid):
+    total_sent = 0
+    
+    try:
+        if not hasattr(client, 'CliEnts2') or not client.key:
+            return 0
+        
+        try:
+            open_pkt = openroom(client.key, client.iv)
+            if open_pkt:
+                try:
+                    client.CliEnts2.send(open_pkt)
+                except:
+                    pass
+            
+            spam_pkt = spmroom(client.key, client.iv, target_uid)
+            if spam_pkt:
+                try:
+                    client.CliEnts2.send(spam_pkt)
+                    total_sent += 1
+                except:
+                    pass
+        except:
+            pass
+
+        for badge_name, badge_value in BADGES.items():
+            try:
+                badge_pkt = create_badge_join_packet(client.key, client.iv, target_uid, badge_value)
+                if badge_pkt:
+                    try:
+                        client.CliEnts2.send(badge_pkt)
+                        total_sent += 1
+                        time.sleep(0.03)
+                    except:
+                        pass
+            except:
+                pass
+                
+    except Exception as e:
+        pass
+    
+    return total_sent
+
+def send_group_badge_spam(client, target_uid):
+    total_sent = 0
+    
+    try:
+        if not hasattr(client, 'CliEnts2') or not client.key:
+            return 0
+        
+        open_pkt = create_open_squad_packet(client.key, client.iv)
+        if open_pkt:
+            try:
+                client.CliEnts2.send(open_pkt)
+                total_sent += 1
+                time.sleep(0.08)
+            except:
+                pass
+        
+        size_pkt = create_change_squad_size_packet(client.key, client.iv, int(client.id))
+        if size_pkt:
+            try:
+                client.CliEnts2.send(size_pkt)
+                total_sent += 1
+                time.sleep(0.08)
+            except:
+                pass
+        
+        invite_pkt = create_squad_invite_packet(client.key, client.iv, target_uid)
+        if invite_pkt:
+            try:
+                client.CliEnts2.send(invite_pkt)
+                total_sent += 1
+                time.sleep(0.05)
+            except:
+                pass
+        
+        for badge_name, badge_value in BADGES.items():
+            try:
+                badge_pkt = create_badge_join_packet(client.key, client.iv, target_uid, badge_value)
+                if badge_pkt:
+                    try:
+                        client.CliEnts2.send(badge_pkt)
+                        total_sent += 1
+                        time.sleep(0.03)
+                    except:
+                        pass
+            except:
+                pass
+                
+    except Exception as e:
+        pass
+    
+    return total_sent
+
+def send_squad_join_packet(client, target_uid, squad_uid):
+    try:
+        proto_fields = {
+            1: 2,
+            2: {
+                1: int(squad_uid),
+                2: int(target_uid)
+            }
+        }
+        packet = create_proto_sync(proto_fields).hex()
+        encrypted = EnC_PacKeT(packet, client.key, client.iv)
+        length = len(encrypted) // 2
+        len_hex = DecodE_HeX(length)
+        padding_map = {2: "000000", 3: "00000", 4: "0000", 5: "000"}
+        padding = padding_map.get(len(len_hex), "000")
+        pkt = bytes.fromhex("0615" + padding + len_hex + encrypted)
+        client.CliEnts2.send(pkt)
+        return True
+    except Exception as e:
+        return False
+
+def load_squad_json():
+    if os.path.exists(SQUAD_DATA_FILE):
+        try:
+            with open(SQUAD_DATA_FILE, "r") as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_squad_json(data):
+    try:
+        with open(SQUAD_DATA_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        print(f"❌ Error saving JSON: {e}")
+
+def clean_and_load_squad_targets():
+    data = load_squad_json()
+    current_time = datetime.now()
+    updated_data = {}
+    
+    print(f"{C}🔄 Checking persistent squad targets...{RS}")
+    
+    for uid, info in data.items():
+        start_time = datetime.fromisoformat(info['start_time'])
+        if (current_time - start_time).total_seconds() < SQUAD_JOIN_DURATION:
+            updated_data[uid] = info
+            start_spam(uid, 'squad')
+            print(f"{G}✅ Restored Squad Target: {uid} (Remaining: {int(30 - (current_time - start_time).total_seconds()/60)} min){RS}")
+        else:
+            remove_target_from_file(uid)
+            print(f"{R}🗑️ Expired & Removed: {uid}{RS}")
+            
+    save_squad_json(updated_data)
+
+def add_squad_leader_as_target(squad_leader_uid, original_target_uid):
+    with active_spam_lock:
+        if squad_leader_uid in active_spam_targets:
+            return False
+        
+        start_time = datetime.now()
+        active_spam_targets[squad_leader_uid] = {
+            'type': 'squad',
+            'start_time': start_time,
+            'status': 'CHECKING',
+            'squad_leader': '',
+            'last_check': datetime.now(),
+            'is_spamming': True,
+            'is_online': False,
+            'is_squad_leader': True,
+            'original_target': original_target_uid,
+            'added_by_squad': True
+        }
+        
+        save_target_to_file(squad_leader_uid)
+        
+        current_squad_data = load_squad_json()
+        current_squad_data[str(squad_leader_uid)] = {
+            'start_time': start_time.isoformat(),
+            'original_target': original_target_uid
+        }
+        save_squad_json(current_squad_data)
+        
+        if squad_leader_uid not in squad_targets:
+            squad_targets[squad_leader_uid] = {
+                'target_uids': [],
+                'start_time': start_time
+            }
+        squad_targets[squad_leader_uid]['target_uids'].append(original_target_uid)
+        
+        thread = Thread(target=spam_worker, args=(squad_leader_uid, 'squad'), daemon=True)
+        with spam_threads_lock:
+            spam_threads[squad_leader_uid] = thread
+        thread.start()
+        
+        print(f"{G}✅ Squad leader {squad_leader_uid} saved to JSON & started (30 min){RS}")
+        return True
+
+def update_target_status(target_uid):
+    try:
+        # রিয়েল টাইম স্ট্যাটাস চেক
+        status_info = check_target_status_sync(target_uid)
+        status = status_info.get('status', 'OFFLINE')
+        
+        # অনলাইন কি না নির্ধারণ
+        is_online = status not in ['OFFLINE', 'NO_RESPONSE', 'ERROR', 'TIMEOUT', 'UNKNOWN']
+        
+        with active_spam_lock:
+            if target_uid in active_spam_targets:
+                # সরাসরি গ্লোবাল ডিকশনারি আপডেট করা
+                active_spam_targets[target_uid].update({
+                    'status': status,
+                    'last_check': datetime.now(),
+                    'is_online': is_online,
+                    'squad_leader': status_info.get('squad_owner', '') if status == 'INSQUAD' else ''
+                })
+        
+        # ক্যাশে আপডেট করা (ওয়েব প্যানেলের জন্য)
+        target_status_cache[target_uid] = {
+            'status': status,
+            'last_check': time.time(),
+            'squad_leader': status_info.get('squad_owner', ''),
+            'mode': status_info.get('mode', ''),
+            'time_playing': status_info.get('time_playing', ''),
+            'is_online': is_online
+        }
+        
+        # স্কোয়াড লিডার পেলে তাকেও টার্গেট হিসেবে এড করা
+        if status == 'INSQUAD':
+            squad_leader = status_info.get('squad_owner', '')
+            if squad_leader and squad_leader != target_uid:
+                add_squad_leader_as_target(squad_leader, target_uid)
+        
+        # কনসোলে স্ট্যাটাস দেখানো (অপশনাল)
+        # print(f"DEBUG: Target {target_uid} status: {status}")
+        
+        return status
+    except Exception as e:
+        print(f"{R}❌ [Update Error] UID {target_uid}: {e}{RS}")
+        return 'ERROR'
+
+def status_checker_thread():
+    print(f"{G}✅ [System] Status Checker Thread Started!{RS}")
+    while True:
+        try:
+            current_time = datetime.now()
+            
+            # ১. স্কোয়াড টার্গেট এক্সপায়ার হয়েছে কি না চেক এবং ক্লিনআপ
+            squad_json_data = load_squad_json()
+            json_changed = False
+            for squad_leader in list(squad_json_data.keys()):
+                start_time = datetime.fromisoformat(squad_json_data[squad_leader]['start_time'])
+                if (current_time - start_time).total_seconds() > SQUAD_JOIN_DURATION:
+                    print(f"{Y}⏰ [Timeout] Removing squad leader: {squad_leader}{RS}")
+                    remove_target_from_file(squad_leader)
+                    del squad_json_data[squad_leader]
+                    json_changed = True
+                    with active_spam_lock:
+                        if squad_leader in active_spam_targets:
+                            del active_spam_targets[squad_leader]
+            if json_changed:
+                save_squad_json(squad_json_data)
+
+            # ২. একটিভ টার্গেটগুলোর লিস্ট নেওয়া
+            with active_spam_lock:
+                targets = list(active_spam_targets.keys())
+
+            if not targets:
+                # টার্গেট না থাকলে কিছুক্ষণ অপেক্ষা করে আবার চেক করবে
+                time.sleep(2)
+                continue
+
+            # ৩. প্রতিটি টার্গেটের স্ট্যাটাস আপডেট করা
+            print(f"{C}🔍 [System] Checking status for {len(targets)} targets...{RS}")
+            for target_uid in targets:
+                # টার্গেটটি এখনো লিস্টে আছে কি না নিশ্চিত হয়ে চেক করা
+                with active_spam_lock:
+                    if target_uid not in active_spam_targets:
+                        continue
+                
+                status = update_target_status(target_uid)
+                # প্রতি চেকের মাঝে সামান্য গ্যাপ রাখা যাতে সার্ভার ব্লক না করে
+                time.sleep(1.5) 
+
+            # ৪. পরবর্তী সাইকেলের জন্য অপেক্ষা (STATUS_CHECK_INTERVAL)
+            time.sleep(STATUS_CHECK_INTERVAL)
+
+        except Exception as e:
+            print(f"{R}❌ [Status Checker Error] {e}{RS}")
+            time.sleep(5)
+
+def spam_worker(target_uid, spam_type='full'):
+    print(f"\n{G}{'='*60}{RS}")
+    print(f"{G}🎯 SPAM STARTED ON {target_uid} (Type: {spam_type}){RS}")
+    print(f"{C}{'='*60}{RS}\n")
+
+    total_requests = 0
+    round_number = 0
+    is_spamming = True
+
+    while True:
+        with active_spam_lock:
+            if target_uid not in active_spam_targets:
+                break
+            
+            is_online = active_spam_targets[target_uid].get('is_online', False)
+            
+            if not is_online:
+                if is_spamming:
+                    is_spamming = False
+                    print(f"{Y}⚠️ Target {target_uid} is OFFLINE - Pausing spam{RS}")
+            else:
+                if not is_spamming:
+                    is_spamming = True
+                    print(f"{G}✅ Target {target_uid} is ONLINE - Resuming spam{RS}")
+
+        with connected_clients_lock:
+            clients_list = list(connected_clients.values())
+
+        if not clients_list:
+            time.sleep(2)
+            continue
+
+        if not is_spamming:
+            time.sleep(2)
+            continue
+
+        round_number += 1
+
+        for client in clients_list:
+            with active_spam_lock:
+                if target_uid not in active_spam_targets:
+                    break
+
+            try:
+                is_group_account = getattr(client, 'is_group_account', False)
+                
+                if is_group_account:
+                    total_requests += send_group_badge_spam(client, target_uid)
+                else:
+                    total_requests += send_room_badge_spam(client, target_uid)
+            except Exception as e:
+                pass
+
+            time.sleep(0.05)
+
+        if round_number % 10 == 0:
+            status = target_status_cache.get(target_uid, {}).get('status', 'UNKNOWN')
+            print(f"{C}{'='*50}{RS}")
+            print(f"{G}📊 Round {round_number} Complete{RS}")
+            print(f"{G}📊 Total Requests: {total_requests}{RS}")
+            print(f"{G}🎯 Target: {target_uid}{RS}")
+            print(f"{G}📊 Status: {status}{RS}")
+            print(f"{G}📊 Online: {is_spamming}{RS}")
+            print(f"{G}🤖 Bots: {len(clients_list)}{RS}")
+            print(f"{C}{'='*50}{RS}\n")
+        
+        time.sleep(0.5)
+
+    with spam_threads_lock:
+        if target_uid in spam_threads:
+            del spam_threads[target_uid]
+
+    print(f"\n{R}🛑 SPAM STOPPED ON {target_uid}{RS}\n")
+
+def start_spam(target_uid, spam_type='full'):
+    with active_spam_lock:
+        if target_uid in active_spam_targets:
+            return False, f"Already spamming {target_uid}"
+        
+        active_spam_targets[target_uid] = {
+            'type': spam_type,
+            'start_time': datetime.now(),
+            'status': 'CHECKING',
+            'squad_leader': '',
+            'last_check': datetime.now(),
+            'is_spamming': True,
+            'is_online': False,
+            'is_squad_leader': False,
+            'original_target': '',
+            'added_by_squad': False
+        }
+    
+    save_target_to_file(target_uid) 
+    
+    thread = Thread(target=spam_worker, args=(target_uid, spam_type), daemon=True)
+    with spam_threads_lock:
+        spam_threads[target_uid] = thread
+    thread.start()
+    
+    Thread(target=update_target_status, args=(target_uid,), daemon=True).start()
+    
+    return True, f"Started spam on {target_uid}"
+
+def stop_spam(target_uid):
+    with active_spam_lock:
+        if target_uid in active_spam_targets:
+            remove_target_from_file(target_uid) 
+            
+            if active_spam_targets[target_uid].get('added_by_squad', False):
+                if target_uid in squad_targets:
+                    del squad_targets[target_uid]
+            
+            del active_spam_targets[target_uid]
+            if target_uid in target_status_cache:
+                del target_status_cache[target_uid]
+            return True, f"Stopped spam on {target_uid}"
+    return False, f"No spam found for {target_uid}"
+
+def stop_all_spam():
+    with active_spam_lock:
+        targets = list(active_spam_targets.keys())
+        for target in targets:
+            remove_target_from_file(target)
+            del active_spam_targets[target]
+        squad_targets.clear()
+        target_status_cache.clear()
+    return True, f"Stopped all spam ({len(targets)} targets)"
+
+def get_spam_status():
+    with active_spam_lock:
+        active_targets = []
+        for target, info in active_spam_targets.items():
+            start_time = info.get('start_time')
+            elapsed = (datetime.now() - start_time).total_seconds() if start_time else 0
+            status = info.get('status', 'UNKNOWN')
+            squad_leader = info.get('squad_leader', '')
+            is_online = info.get('is_online', False)
+            is_squad_leader = info.get('is_squad_leader', False)
+            original_target = info.get('original_target', '')
+            
+            status_display = status
+            if status == 'SOLO':
+                status_display = '🟢 Solo'
+            elif status == 'INSQUAD':
+                status_display = '🔵 In Squad'
+            elif status == 'INGAME':
+                status_display = '🟡 In Game'
+            elif status == 'IN_ROOM':
+                status_display = '🟠 In Room'
+            elif status == 'OFFLINE':
+                status_display = '⚪ Offline'
+            elif status == 'SOCIAL_ISLAND':
+                status_display = '🟣 Social Island'
+            elif status == 'MATCHMAKING':
+                status_display = '🟣 Matchmaking'
+            elif status == 'CHECKING':
+                status_display = '⏳ Checking...'
+            else:
+                status_display = '⚪ Unknown'
+            
+            banner_url = f"https://mahir-banner-api.vercel.app/profile?uid={target}"
+            
+            active_targets.append({
+                'uid': target,
+                'type': 'SQUAD' if is_squad_leader else info.get('type', 'full'),
+                'elapsed_minutes': int(elapsed / 60),
+                'banner_url': banner_url,
+                'status': status,
+                'status_display': status_display,
+                'squad_leader': squad_leader,
+                'squad_owner': info.get('squad_leader', ''),
+                'mode': target_status_cache.get(target, {}).get('mode', ''),
+                'time_playing': target_status_cache.get(target, {}).get('time_playing', ''),
+                'last_check': info.get('last_check', datetime.now()).strftime('%H:%M:%S'),
+                'is_online': is_online,
+                'is_squad_leader': is_squad_leader,
+                'original_target': original_target
+            })
+    
+    with connected_clients_lock:
+        accounts_count = len(connected_clients)
+        accounts_list = list(connected_clients.keys())
+    
+    return {
+        'active_targets': active_targets,
+        'active_count': len(active_targets),
+        'accounts_count': accounts_count,
+        'accounts_list': accounts_list[:50]
+    }
+
+# ==================== FF CLIENT ====================
+class FF_CLient():
+    def __init__(self, uid, password, is_group_account=False):
+        self.id = uid
+        self.password = password
+        self.is_group_account = is_group_account
+        self.key = None
+        self.iv = None
+        self.running = True  # ক্লায়েন্ট রানিং কিনা ট্র্যাক করার জন্য
+        self.Get_FiNal_ToKen_0115()
+
+    def Connect_SerVer_OnLine(self, Token, tok, host, port, key, iv, host2, port2):
+        try:
+            self.AutH_ToKen_0115 = tok
+            self.CliEnts2 = socket.create_connection((host2, int(port2)), timeout=10)
+            self.CliEnts2.send(bytes.fromhex(self.AutH_ToKen_0115))
+            with connected_clients_lock:
+                if self.id not in connected_clients:
+                    connected_clients[self.id] = self
+                    print(f"{G}✅ Online: {self.id} (Type: {'GROUP' if self.is_group_account else 'ROOM'}) (Total: {len(connected_clients)}){RS}")
+        except Exception as e:
+            print(f"{R}❌ Online error {self.id}: {e}{RS}")
+            return
+        while self.running:
+            try:
+                self.CliEnts2.settimeout(30)
+                self.DaTa2 = self.CliEnts2.recv(99999)
+                if not self.DaTa2:
+                    break
+                if '0500' in self.DaTa2.hex()[0:4] and len(self.DaTa2.hex()) > 30:
+                    self.packet = json.loads(DeCode_PackEt(f'08{self.DaTa2.hex().split("08",1)[1]}'))
+                    self.AutH = self.packet['5']['data']['7']['data']
+            except socket.timeout:
+                continue
+            except Exception as e:
+                break
+
+    def Connect_SerVer(self, Token, tok, host, port, key, iv, host2, port2):
+        self.AutH_ToKen_0115 = tok
+        try:
+            self.CliEnts = socket.create_connection((host, int(port)), timeout=10)
+            self.CliEnts.send(bytes.fromhex(self.AutH_ToKen_0115))
+            self.DaTa = self.CliEnts.recv(1024)
+            threading.Thread(target=self.Connect_SerVer_OnLine, args=(Token, tok, host, port, key, iv, host2, port2), daemon=True).start()
+        except Exception as e:
+            print(f"{R}❌ Connection error {self.id}: {e}{RS}")
+            return
+        
+        self.key = key
+        self.iv = iv
+        with connected_clients_lock:
+            if self.id not in connected_clients:
+                connected_clients[self.id] = self
+                print(f"{G}✅ Registered: {self.id} (Type: {'GROUP' if self.is_group_account else 'ROOM'}){RS}")
+        
+        while self.running:
+            try:
+                self.CliEnts.settimeout(30)
+                self.DaTa = self.CliEnts.recv(1024)
+                if not self.DaTa:
+                    break
+            except socket.timeout:
+                continue
+            except Exception as e:
+                break
+        
+        # রিকানেক্ট করার চেষ্টা
+        if self.running:
+            time.sleep(2)
+            self.Connect_SerVer(Token, tok, host, port, key, iv, host2, port2)
+
+    def GeT_Key_Iv(self, serialized_data):
+        my_message = xKEys.MyMessage()
+        my_message.ParseFromString(serialized_data)
+        timestamp, key, iv = my_message.field21, my_message.field22, my_message.field23
+        timestamp_obj = Timestamp()
+        timestamp_obj.FromNanoseconds(timestamp)
+        combined = timestamp_obj.seconds * 1_000_000_000 + timestamp_obj.nanos
+        return combined, key, iv
+
+    def Guest_GeneRaTe(self, uid, password):
+        url = "https://100067.connect.garena.com/oauth/guest/token/grant"
+        headers = {
+            "Host": "100067.connect.garena.com",
+            "User-Agent": "GarenaMSDK/4.0.19P4(G011A ;Android 9;en;US;)",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "close",
+        }
+        data = {
+            "uid": uid,
+            "password": password,
+            "response_type": "token",
+            "client_type": "2",
+            "client_secret": "2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3",
+            "client_id": "100067",
+        }
+        try:
+            resp = requests.post(url, headers=headers, data=data, timeout=10).json()
+            access_token, open_id = resp['access_token'], resp['open_id']
+            time.sleep(0.2)
+            print(f'{C}🔐 Login: {self.id} ({'GROUP' if self.is_group_account else 'ROOM'}){RS}')
+            return self.ToKen_GeneRaTe(access_token, open_id)
+        except:
+            time.sleep(10)
+            return self.Guest_GeneRaTe(uid, password)
+
+    def GeT_LoGin_PorTs(self, jwt_token, payload, dynamic_url="https://clientbp.ggpolarbear.com"):
+        url = f'{dynamic_url}/GetLoginData'
+        headers = {
+            'Expect': '100-continue',
+            'Authorization': f'Bearer {jwt_token}',
+            'X-Unity-Version': '2022.3.47f1',
+            'X-GA': 'v1 1',
+            'ReleaseVersion': 'OB54',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': 'UnityPlayer/2022.3.47f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)',
+            'Connection': 'close',
+            'Accept-Encoding': 'deflate, gzip',
+        }
+        try:
+            resp = requests.post(url, headers=headers, data=payload, verify=False, timeout=10)
+            data = json.loads(DeCode_PackEt(resp.content.hex()))
+            addr1, addr2 = data['32']['data'], data['14']['data']
+            ip, ip2 = addr1[:-6], addr2[:-6]
+            port, port2 = addr1[-5:], addr2[-5:]
+            return ip, port, ip2, port2
+        except:
+            return None, None, None, None
+
+    def ToKen_GeneRaTe(self, access_token, open_id):
+        url = f"{DYNAMIC_SERVER_URL}/MajorLogin"
+        
+        dynamic_host = DYNAMIC_SERVER_URL.split("//")[-1].split("/")[0]
+
+        headers = {
+            'X-Unity-Version': '2022.3.47f1',
+            'ReleaseVersion': CURRENT_OB, 
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-GA': 'v1 1',
+            'User-Agent': 'UnityPlayer/2022.3.47f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)',
+            'Host': dynamic_host, 
+            'Connection': 'Keep-Alive',
+            'Accept-Encoding': 'gzip'
+        }
+        try:
+            major_login = MajoRLoGinrEq_pb2.MajorLogin()
+            major_login.event_time = str(datetime.now())[:-7]
+            major_login.game_name = "free fire"
+            major_login.platform_id = 2
+            major_login.client_version = FREEFIRE_VERSION_NAME
+            major_login.client_version_code = "2024010012"
+            major_login.system_software = "Android OS 11 / API-30 (RQ3A.210805.001)"
+            major_login.system_hardware = "Handheld"
+            major_login.device_type = "Handheld"
+            major_login.telecom_operator = "Verizon"
+            major_login.network_operator_a = "Verizon"
+            major_login.network_type = "WIFI"
+            major_login.network_type_a = "WIFI"
+            major_login.screen_width = 1080
+            major_login.screen_height = 2400
+            major_login.screen_dpi = "440"
+            major_login.processor_details = "ARMv8"
+            major_login.memory = 6144
+            major_login.gpu_renderer = "Adreno (TM) 650"
+            major_login.gpu_version = "OpenGL ES 3.2 V@1.50"
+            major_login.graphics_api = "OpenGLES3"
+            major_login.unique_device_id = "Google|34a7dcdf-a7d5-4cb6-8d7e-3b0e448a0c57"
+            major_login.language = "en"
+            major_login.open_id = open_id
+            major_login.open_id_type = "4"
+            major_login.login_open_id_type = 4
+            major_login.access_token = access_token
+            major_login.login_by = 3
+            major_login.platform_sdk_id = 2
+            major_login.origin_platform_type = "4"
+            major_login.primary_platform_type = "4"
+            memory_available = major_login.memory_available
+            memory_available.version = 55
+            memory_available.hidden_value = 81
+            major_login.external_storage_total = 128512
+            major_login.external_storage_available = random.randint(38000,52000)
+            major_login.internal_storage_total = 110731
+            major_login.internal_storage_available = random.randint(18000,32000)
+            major_login.game_disk_storage_total = 26628
+            major_login.game_disk_storage_available = random.randint(18000,28080)
+            major_login.external_sdcard_total_storage = 119234
+            major_login.external_sdcard_avail_storage = random.randint(28080,60000)
+            major_login.library_path = "/data/app/~~random/base.apk"
+            major_login.library_token = "hash|base.apk"
+            major_login.client_using_version = "7428b253defc164018c604a1ebbfebdf"
+            major_login.supported_astc_bitset = 16383
+            major_login.analytics_detail = b"FwQVTgUPX1UaUllDDwcWCRBpWAUOUgsvA1snWlBaO1kFYg=="
+            major_login.loading_time = random.randint(9000,18000)
+            major_login.release_channel = "android"
+            major_login.if_push = 1
+            major_login.is_vpn = 0
+            major_login.cpu_type = 2
+            major_login.cpu_architecture = "64"
+            major_login.android_engine_init_flag = 110009
+
+            raw_data = major_login.SerializeToString()
+            key = b'Yg&tc%DEuh6%Zc^8'
+            iv = b'6oyZDr22E3ychjM%'
+            cipher = AES.new(key, AES.MODE_CBC, iv)
+            payload = cipher.encrypt(pad(raw_data, 16))
+        except:
+            time.sleep(5)
+            return self.ToKen_GeneRaTe(access_token, open_id)
+
+        resp = requests.post(url, headers=headers, data=payload, verify=False, timeout=10)
+        if resp.status_code == 200:
+            try:
+                data = json.loads(DeCode_PackEt(resp.content.hex()))
+                jwt_token = data['8']['data']
+                combined, key, iv = self.GeT_Key_Iv(resp.content)
+                ip, port, ip2, port2 = self.GeT_LoGin_PorTs(jwt_token, payload)
+                return jwt_token, key, iv, combined, ip, port, ip2, port2
+            except:
+                time.sleep(5)
+                return self.ToKen_GeneRaTe(access_token, open_id)
+        else:
+            time.sleep(5)
+            return self.ToKen_GeneRaTe(access_token, open_id)
+
+    def Get_FiNal_ToKen_0115(self):
+        try:
+            result = self.Guest_GeneRaTe(self.id, self.password)
+            if not result:
+                time.sleep(5)
+                return self.Get_FiNal_ToKen_0115()
+            token, key, iv, ts, ip, port, ip2, port2 = result
+            if not all([ip, port, ip2, port2]):
+                time.sleep(5)
+                return self.Get_FiNal_ToKen_0115()
+            self.JwT_ToKen = token
+            try:
+                decoded = jwt.decode(token, options={"verify_signature": False})
+                account_id = decoded.get('account_id')
+                enc_acc = hex(account_id)[2:]
+                hex_ts = DecodE_HeX(ts)
+                self.JwT_ToKen_ = token.encode().hex()
+                print(f'{C}🆔 Account UID: {account_id} ({'GROUP' if self.is_group_account else 'ROOM'}){RS}')
+            except:
+                time.sleep(5)
+                return self.Get_FiNal_ToKen_0115()
+            try:
+                enc_len = len(EnC_PacKeT(self.JwT_ToKen_, key, iv)) // 2
+                header = hex(enc_len)[2:]
+                length = len(enc_acc)
+                pad = '00000000'
+                if length == 9:
+                    pad = '0000000'
+                elif length == 8:
+                    pad = '00000000'
+                elif length == 10:
+                    pad = '000000'
+                elif length == 7:
+                    pad = '000000000'
+                self.Header = f'0115{pad}{enc_acc}{hex_ts}00000{header}'
+                self.FiNal_ToKen_0115 = self.Header + EnC_PacKeT(self.JwT_ToKen_, key, iv)
+            except:
+                time.sleep(5)
+                return self.Get_FiNal_ToKen_0115()
+            self.AutH_ToKen = self.FiNal_ToKen_0115
+            self.Connect_SerVer(self.JwT_ToKen, self.AutH_ToKen, ip, port, key, iv, ip2, port2)
+            return self.AutH_ToKen, key, iv
+        except:
+            time.sleep(5)
+            return self.Get_FiNal_ToKen_0115()
+    
+    def stop(self):
+        """ক্লায়েন্ট বন্ধ করার জন্য"""
+        self.running = False
+        try:
+            if hasattr(self, 'CliEnts'):
+                self.CliEnts.close()
+        except:
+            pass
+        try:
+            if hasattr(self, 'CliEnts2'):
+                self.CliEnts2.close()
+        except:
+            pass
+
+def start_account(account):
+    try:
+        is_group = account.get('type', '') == 'group'
+        print(f"{G}🚀 Logging in: {account['id']} ({'GROUP' if is_group else 'ROOM'}){RS}")
+        FF_CLient(account['id'], account['password'], is_group_account=is_group)
+    except Exception as e:
+        time.sleep(1)
+        start_account(account)
+
+def run_accounts():
+    global ACCOUNTS, is_resetting
+    if is_resetting:
+        return
+    
+    for acc in ACCOUNTS:
+        Thread(target=start_account, args=(acc,), daemon=True).start()
+        time.sleep(0.3)  # রেট লিমিট এড়ানোর জন্য
+
+def reset_accounts():
+    """সমস্ত অ্যাকাউন্ট রিসেট করে নতুন করে কানেক্ট করে"""
+    global is_resetting, ACCOUNTS
+    
+    if is_resetting:
+        return False, "Already resetting..."
+    
+    is_resetting = True
+    print(f"\n{Y}🔄 [SYSTEM] Resetting all accounts...{RS}")
+    
+    try:
+        # ১. বর্তমান কানেকশনগুলো বন্ধ করা
+        with connected_clients_lock:
+            for uid in list(connected_clients.keys()):
+                try:
+                    client = connected_clients[uid]
+                    client.stop()  # ক্লায়েন্ট বন্ধ করা
+                except:
+                    pass
+            connected_clients.clear()
+        
+        # ২. একটু অপেক্ষা করা (কানেকশন ক্লোজ হওয়ার জন্য)
+        time.sleep(2)
+        
+        # ৩. ফাইল থেকে একাউন্ট আবার লোড করা
+        ACCOUNTS = load_unified_accounts(ACCOUNTS_FILE)
+        
+        # ৪. নতুন করে রান করা
+        run_accounts()
+        print(f"{G}✅ [SYSTEM] Reset Complete. Total accounts: {len(ACCOUNTS)}{RS}\n")
+        
+        return True, f"Reset complete. {len(ACCOUNTS)} accounts connected."
+    except Exception as e:
+        print(f"{R}❌ Reset error: {e}{RS}")
+        return False, f"Reset error: {str(e)}"
+    finally:
+        is_resetting = False
+
+def auto_reset_accounts():
+    """প্রতি ১০ মিনিট পরপর একাউন্টগুলো রিসেট করার লুপ"""
+    while True:
+        time.sleep(ACCOUNT_REFRESH_INTERVAL)
+        reset_accounts()
+
+# ==================== FLASK ROUTES ====================
+@app.route('/login', methods=['GET', 'POST'])
+def login_page():
+    if request.method == 'POST':
+        password = request.form.get('password', '')
+        if password == ADMIN_PASSWORD:
+            session['logged_in'] = True
+            return redirect(url_for('index'))
+        return render_template_string(LOGIN_TEMPLATE, error='Invalid Password!')
+    return render_template_string(LOGIN_TEMPLATE, error=None)
+
+@app.route('/logout')
+def logout():
+    session.pop('logged_in', None)
+    return redirect(url_for('login_page'))
+
+@app.route('/')
+@login_required
+def index():
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/targets', methods=['GET', 'POST'])
+def targets_page():
+    if request.method == 'POST':
+        password = request.form.get('password', '')
+        if password == TARGETS_PASSWORD:
+            session['targets_view'] = True
+            return redirect(url_for('targets_page'))
+        return render_template_string(TARGETS_LOGIN_TEMPLATE, error='Invalid Password!')
+    
+    if not session.get('targets_view'):
+        return render_template_string(TARGETS_LOGIN_TEMPLATE, error=None)
+    
+    return render_template_string(TARGETS_TEMPLATE)
+
+@app.route('/targets/logout')
+def targets_logout():
+    session.pop('targets_view', None)
+    return redirect(url_for('targets_page'))
+
+@app.route('/stream/targets')
+def stream_targets():
+    def generate():
+        while True:
+            with active_spam_lock:
+                targets = []
+                for uid, info in active_spam_targets.items():
+                    elapsed = (datetime.now() - info['start_time']).total_seconds() if info.get('start_time') else 0
+                    status = info.get('status', 'UNKNOWN')
+                    squad_leader = info.get('squad_leader', '')
+                    is_online = info.get('is_online', False)
+                    is_squad_leader = info.get('is_squad_leader', False)
+                    original_target = info.get('original_target', '')
+                    
+                    status_display = status
+                    if status == 'SOLO':
+                        status_display = '🟢 Solo'
+                    elif status == 'INSQUAD':
+                        status_display = '🔵 In Squad'
+                    elif status == 'INGAME':
+                        status_display = '🟡 In Game'
+                    elif status == 'IN_ROOM':
+                        status_display = '🟠 In Room'
+                    elif status == 'OFFLINE':
+                        status_display = '⚪ Offline'
+                    elif status == 'SOCIAL_ISLAND':
+                        status_display = '🟣 Social Island'
+                    elif status == 'MATCHMAKING':
+                        status_display = '🟣 Matchmaking'
+                    else:
+                        status_display = '⚪ Unknown'
+                    
+                    cache_info = target_status_cache.get(uid, {})
+                    targets.append({
+                        'uid': uid,
+                        'type': 'SQUAD' if is_squad_leader else info.get('type', 'full'),
+                        'elapsed_minutes': int(elapsed / 60),
+                        'banner_url': f"https://mahir-banner-api.vercel.app/profile?uid={uid}",
+                        'status': status,
+                        'status_display': status_display,
+                        'squad_leader': squad_leader,
+                        'squad_owner': squad_leader,
+                        'mode': cache_info.get('mode', ''),
+                        'time_playing': cache_info.get('time_playing', ''),
+                        'last_check': info.get('last_check', datetime.now()).strftime('%H:%M:%S'),
+                        'is_online': is_online,
+                        'is_squad_leader': is_squad_leader,
+                        'original_target': original_target
+                    })
+            yield f"data: {json.dumps(targets)}\n\n"
+            time.sleep(3)
+    
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
+# ==================== API ROUTES ====================
+
+@app.route('/api/profile-info/<uid>')
+def get_profile_info(uid):
+    if not uid or not uid.isdigit():
+        return jsonify({'success': False, 'message': 'Invalid UID!'}), 400
+    
+    try:
+        url = f"https://mahir-info-api.vercel.app/info?uid={uid}"
+        resp = requests.get(url, timeout=10, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
+        
+        if resp.status_code == 200:
+            return jsonify(resp.json())
+        
+        url2 = f"https://mahir-info-api.vercel.app/short_info?uid={uid}"
+        resp2 = requests.get(url2, timeout=10, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
+        
+        if resp2.status_code == 200:
+            return jsonify(resp2.json())
+        
+        return jsonify({'success': False, 'message': 'Profile not found'}), 404
+        
+    except requests.exceptions.Timeout:
+        return jsonify({'success': False, 'message': 'Request timeout'}), 504
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/spam/start', methods=['GET'])
+def api_get_start_spam():
+    uid = request.args.get('uid')
+    password = request.args.get('pass')
+    
+    if password != ADMIN_PASSWORD:
+        return jsonify({'success': False, 'message': 'Invalid password!'}), 401
+    
+    if not uid or not uid.isdigit():
+        return jsonify({'success': False, 'message': 'Invalid UID format!'}), 400
+    
+    success, message = start_spam(uid, 'full')
+    return jsonify({'success': success, 'message': message})
+
+@app.route('/api/spam/start/<uid>', methods=['GET'])
+@login_required
+def api_get_start_spam_path(uid):
+    if not uid or not uid.isdigit():
+        return jsonify({'success': False, 'message': 'Invalid UID format!'}), 400
+    
+    success, message = start_spam(uid, 'full')
+    return jsonify({'success': success, 'message': message})
+
+@app.route('/api/stop', methods=['GET'])
+def api_get_stop_spam():
+    uid = request.args.get('uid')
+    password = request.args.get('pass')
+    
+    if password != ADMIN_PASSWORD:
+        return jsonify({'success': False, 'message': 'Invalid password!'}), 401
+    
+    if not uid or not uid.isdigit():
+        return jsonify({'success': False, 'message': 'Invalid UID format!'}), 400
+    
+    success, message = stop_spam(uid)
+    return jsonify({'success': success, 'message': message})
+
+@app.route('/api/stop/<uid>', methods=['GET'])
+@login_required
+def api_get_stop_spam_path(uid):
+    if not uid or not uid.isdigit():
+        return jsonify({'success': False, 'message': 'Invalid UID format!'}), 400
+    
+    success, message = stop_spam(uid)
+    return jsonify({'success': success, 'message': message})
+
+@app.route('/api/stop-all', methods=['GET'])
+def api_get_stop_all():
+    password = request.args.get('pass')
+    
+    if password != ADMIN_PASSWORD:
+        return jsonify({'success': False, 'message': 'Invalid password!'}), 401
+    
+    success, message = stop_all_spam()
+    return jsonify({'success': success, 'message': message})
+
+@app.route('/api/stop-all', methods=['GET'])
+@login_required
+def api_get_stop_all_session():
+    success, message = stop_all_spam()
+    return jsonify({'success': success, 'message': message})
+
+@app.route('/api/status', methods=['GET'])
+def api_get_status():
+    password = request.args.get('pass')
+    
+    if password != ADMIN_PASSWORD:
+        return jsonify({'success': False, 'message': 'Invalid password!'}), 401
+    
+    return jsonify({'success': True, 'data': get_spam_status()})
+
+@app.route('/api/status', methods=['GET'])
+@login_required
+def api_get_status_session():
+    return jsonify({'success': True, 'data': get_spam_status()})
+
+@app.route('/api/accounts', methods=['GET'])
+def api_get_accounts():
+    password = request.args.get('pass')
+    
+    if password != ADMIN_PASSWORD:
+        return jsonify({'success': False, 'message': 'Invalid password!'}), 401
+    
+    with connected_clients_lock:
+        accounts = list(connected_clients.keys())
+    return jsonify({'success': True, 'accounts': accounts})
+
+@app.route('/api/accounts', methods=['GET'])
+@login_required
+def api_get_accounts_session():
+    with connected_clients_lock:
+        accounts = list(connected_clients.keys())
+    return jsonify({'success': True, 'accounts': accounts})
+
+@app.route('/api/accounts/count', methods=['GET'])
+@login_required
+def api_get_accounts_count():
+    try:
+        global ACCOUNTS
+        total = len(ACCOUNTS)
+        group = len([a for a in ACCOUNTS if a.get('type') == 'group'])
+        room = len([a for a in ACCOUNTS if a.get('type') == 'room'])
+        return jsonify({
+            'success': True,
+            'total': total,
+            'group': group,
+            'room': room
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/upload/accs', methods=['POST'])
+@login_required
+def upload_accs():
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'message': 'No file uploaded'}), 400
+    
+    file = request.files['file']
+    if not file.filename.endswith('.txt'):
+        return jsonify({'success': False, 'message': 'Only .txt files allowed'}), 400
+    
+    try:
+        content = file.read().decode('utf-8')
+        with open('accs.txt', 'w', encoding='utf-8') as f:
+            f.write(content)
+        
+        global ACCOUNTS
+        ACCOUNTS = load_unified_accounts('accs.txt')
+        
+        Thread(target=run_accounts, daemon=True).start()
+        
+        return jsonify({
+            'success': True, 
+            'message': 'Unified accounts uploaded', 
+            'total': len(ACCOUNTS),
+            'group': len([a for a in ACCOUNTS if a['type'] == 'group']),
+            'room': len([a for a in ACCOUNTS if a['type'] == 'room'])
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
+
+@app.route('/api/get/accs')
+@login_required
+def download_accs():
+    if os.path.exists('accs.txt'):
+        with open('accs.txt', 'r', encoding='utf-8') as f:
+            content = f.read()
+        return Response(content, mimetype='text/plain', headers={'Content-Disposition': 'attachment;filename=accs.txt'})
+    return jsonify({'success': False, 'message': 'File not found'}), 404
+
+@app.route('/api/reset-accounts', methods=['POST'])
+@login_required
+def api_reset_accounts():
+    """API endpoint for resetting all accounts"""
+    success, message = reset_accounts()
+    return jsonify({'success': success, 'message': message})
+
+@app.route('/api/spam/start', methods=['POST'])
+@login_required
+def api_post_start_spam():
+    data = request.get_json()
+    uid = data.get('uid', '').strip()
+    
+    if not uid or not uid.isdigit():
+        return jsonify({'success': False, 'message': 'Valid UID required!'}), 400
+    
+    if ',' in uid:
+        uids = [u.strip() for u in uid.split(',') if u.strip().isdigit()]
+    elif ' ' in uid:
+        uids = [u.strip() for u in uid.split() if u.strip().isdigit()]
+    else:
+        uids = [uid]
+    
+    results = []
+    for target in uids:
+        success, message = start_spam(target, 'full')
+        results.append({'uid': target, 'success': success, 'message': message})
+    
+    return jsonify({'success': True, 'results': results})
+
+@app.route('/api/stop', methods=['POST'])
+@login_required
+def api_post_stop_spam():
+    data = request.get_json()
+    uid = data.get('uid', '').strip()
+    
+    if not uid or not uid.isdigit():
+        return jsonify({'success': False, 'message': 'Valid UID required!'}), 400
+    
+    success, message = stop_spam(uid)
+    return jsonify({'success': success, 'message': message})
+
+@app.route('/api/stop-all', methods=['POST'])
+@login_required
+def api_post_stop_all():
+    success, message = stop_all_spam()
+    return jsonify({'success': success, 'message': message})
+
+@app.route('/api/targets', methods=['GET'])
+def api_targets():
+    password = request.args.get('pass')
+    if password != ADMIN_PASSWORD and password != TARGETS_PASSWORD and not session.get('logged_in') and not session.get('targets_view'):
+        return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+    
+    with active_spam_lock:
+        targets = []
+        for uid, info in active_spam_targets.items():
+            elapsed = (datetime.now() - info['start_time']).total_seconds() if info.get('start_time') else 0
+            status = info.get('status', 'UNKNOWN')
+            squad_leader = info.get('squad_leader', '')
+            is_online = info.get('is_online', False)
+            is_squad_leader = info.get('is_squad_leader', False)
+            original_target = info.get('original_target', '')
+            
+            status_display = status
+            if status == 'SOLO':
+                status_display = '🟢 Solo'
+            elif status == 'INSQUAD':
+                status_display = '🔵 In Squad'
+            elif status == 'INGAME':
+                status_display = '🟡 In Game'
+            elif status == 'IN_ROOM':
+                status_display = '🟠 In Room'
+            elif status == 'OFFLINE':
+                status_display = '⚪ Offline'
+            else:
+                status_display = '⚪ Unknown'
+            
+            cache_info = target_status_cache.get(uid, {})
+            targets.append({
+                'uid': uid,
+                'type': 'SQUAD' if is_squad_leader else info.get('type', 'full'),
+                'elapsed_minutes': int(elapsed/60),
+                'banner_url': f"https://mahir-banner-api.vercel.app/profile?uid={uid}",
+                'status': status,
+                'status_display': status_display,
+                'squad_leader': squad_leader,
+                'squad_owner': squad_leader,
+                'mode': cache_info.get('mode', ''),
+                'time_playing': cache_info.get('time_playing', ''),
+                'last_check': info.get('last_check', datetime.now()).strftime('%H:%M:%S'),
+                'is_online': is_online,
+                'is_squad_leader': is_squad_leader,
+                'original_target': original_target
+            })
+    return jsonify({'success': True, 'targets': targets})
+
+@app.route('/health')
+def health_check():
+    try:
+        with connected_clients_lock:
+            clients_count = len(connected_clients)
+        
+        with active_spam_lock:
+            targets_count = len(active_spam_targets)
+        
+        try:
+            import psutil
+            process = psutil.Process()
+            memory_mb = process.memory_info().rss / 1024 / 1024
+        except:
+            memory_mb = 0
+        
+        return jsonify({
+            'status': 'healthy',
+            'clients': clients_count,
+            'targets': targets_count,
+            'memory_mb': round(memory_mb, 2),
+            'timestamp': datetime.now().isoformat()
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e)
+        }), 500
+
+@app.route('/stream/console')
+def stream_console():
+    """Live console stream for web UI"""
+    def generate():
+        console_logs = []
+        while True:
+            yield f"data: {json.dumps(console_logs[-20:])}\n\n"
+            time.sleep(1)
+    
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
+# ==================== TEMPLATES ====================
+LOGIN_TEMPLATE = '''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TORIKUL SYSTEM | Secure Login</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Rajdhani', sans-serif; }
+        body { background: #05050a; color: #fff; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; overflow: hidden; }
+        #matrix-canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 0; }
+        .login-box { background: rgba(10, 10, 25, 0.8); border: 1px solid rgba(255, 0, 127, 0.3); border-radius: 16px; padding: 50px 35px; width: 100%; max-width: 420px; backdrop-filter: blur(15px); text-align: center; position: relative; z-index: 1; box-shadow: 0 0 60px rgba(255, 0, 127, 0.1); }
+        .login-box h1 { font-family: 'Orbitron', sans-serif; font-size: 2.2rem; background: linear-gradient(135deg, #ff007f, #7f00ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 5px; }
+        .login-box p.sub { color: #00ffcc; text-transform: uppercase; letter-spacing: 4px; margin-bottom: 35px; font-size: 0.85rem; }
+        .input-group { position: relative; margin-bottom: 25px; }
+        .input-group i { position: absolute; left: 15px; top: 50%; transform: translateY(-50%); color: rgba(255,255,255,0.3); font-size: 1.1rem; }
+        .input-group input { width: 100%; padding: 15px 15px 15px 45px; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; color: #fff; font-size: 1.1rem; outline: none; transition: 0.3s; }
+        .input-group input:focus { border-color: #ff007f; box-shadow: 0 0 20px rgba(255, 0, 127, 0.15); }
+        .btn-login { width: 100%; padding: 16px; background: linear-gradient(135deg, #ff007f, #7f00ff); border: none; border-radius: 10px; color: #fff; font-size: 1.2rem; font-weight: 700; cursor: pointer; transition: 0.3s; letter-spacing: 2px; }
+        .btn-login:hover { transform: translateY(-2px); box-shadow: 0 5px 30px rgba(255, 0, 127, 0.3); }
+        .error { color: #ff4444; margin-top: 15px; font-weight: 600; }
+        .footer-text { color: rgba(255,255,255,0.2); font-size: 0.7rem; margin-top: 20px; letter-spacing: 1px; }
+    </style>
+</head>
+<body>
+    <canvas id="matrix-canvas"></canvas>
+    <div class="login-box">
+        <h1>TORIKUL SYSTEM</h1>
+        <p class="sub">Access Control Panel</p>
+        <form action="/login" method="POST">
+            <div class="input-group"><i class="fas fa-key"></i><input type="password" name="password" placeholder="Enter Security Password" required></div>
+            <button type="submit" class="btn-login"><i class="fas fa-unlock-alt"></i> UNLOCK</button>
+            {% if error %}<div class="error"><i class="fas fa-exclamation-circle"></i> {{ error }}</div>{% endif %}
+        </form>
+        <div class="footer-text">TORIKUL ENGINE v3.0</div>
+    </div>
+    <script>
+        const canvas = document.getElementById('matrix-canvas'); const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%&'.split('');
+        const fontSize = 14; const columns = canvas.width / fontSize; const drops = Array(Math.floor(columns)).fill(1);
+        function drawMatrix() {
+            ctx.fillStyle = 'rgba(5, 5, 10, 0.05)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#ff007f'; ctx.font = fontSize + 'px monospace';
+            drops.forEach((y, i) => { const text = chars[Math.floor(Math.random() * chars.length)];
+                ctx.fillText(text, i * fontSize, y * fontSize);
+                if (y * fontSize > canvas.height && Math.random() > 0.975) drops[i] = 0; drops[i]++; });
+        }
+        setInterval(drawMatrix, 35);
+        window.addEventListener('resize', () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; });
+    </script>
+</body>
+</html>'''
+
+TARGETS_LOGIN_TEMPLATE = '''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎯 TARGETS | TORIKUL</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Rajdhani', sans-serif; }
+        body { background: #05050a; color: #fff; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; overflow: hidden; }
+        #matrix-canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 0; }
+        .login-box { background: rgba(10, 10, 25, 0.8); border: 1px solid rgba(0, 212, 255, 0.3); border-radius: 16px; padding: 50px 35px; width: 100%; max-width: 420px; backdrop-filter: blur(15px); text-align: center; position: relative; z-index: 1; box-shadow: 0 0 60px rgba(0, 212, 255, 0.1); }
+        .login-box h1 { font-family: 'Orbitron', sans-serif; font-size: 2.2rem; background: linear-gradient(135deg, #00d4ff, #7f00ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 5px; }
+        .login-box p.sub { color: #ff007f; text-transform: uppercase; letter-spacing: 4px; margin-bottom: 35px; font-size: 0.85rem; }
+        .input-group { position: relative; margin-bottom: 25px; }
+        .input-group i { position: absolute; left: 15px; top: 50%; transform: translateY(-50%); color: rgba(255,255,255,0.3); font-size: 1.1rem; }
+        .input-group input { width: 100%; padding: 15px 15px 15px 45px; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; color: #fff; font-size: 1.1rem; outline: none; transition: 0.3s; }
+        .input-group input:focus { border-color: #00d4ff; box-shadow: 0 0 20px rgba(0, 212, 255, 0.15); }
+        .btn-login { width: 100%; padding: 16px; background: linear-gradient(135deg, #00d4ff, #7f00ff); border: none; border-radius: 10px; color: #fff; font-size: 1.2rem; font-weight: 700; cursor: pointer; transition: 0.3s; letter-spacing: 2px; }
+        .btn-login:hover { transform: translateY(-2px); box-shadow: 0 5px 30px rgba(0, 212, 255, 0.3); }
+        .error { color: #ff4444; margin-top: 15px; font-weight: 600; }
+        .footer-text { color: rgba(255,255,255,0.2); font-size: 0.7rem; margin-top: 20px; letter-spacing: 1px; }
+    </style>
+</head>
+<body>
+    <canvas id="matrix-canvas"></canvas>
+    <div class="login-box">
+        <h1><i class="fas fa-crosshairs"></i> TARGETS</h1>
+        <p class="sub">View Active Targets</p>
+        <form action="/targets" method="POST">
+            <div class="input-group"><i class="fas fa-key"></i><input type="password" name="password" placeholder="Enter Target Password" required></div>
+            <button type="submit" class="btn-login"><i class="fas fa-unlock-alt"></i> VIEW TARGETS</button>
+            {% if error %}<div class="error"><i class="fas fa-exclamation-circle"></i> {{ error }}</div>{% endif %}
+        </form>
+        <div class="footer-text">TORIKUL TARGET VIEWER v1.0</div>
+    </div>
+    <script>
+        const canvas = document.getElementById('matrix-canvas'); const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%&'.split('');
+        const fontSize = 14; const columns = canvas.width / fontSize; const drops = Array(Math.floor(columns)).fill(1);
+        function drawMatrix() {
+            ctx.fillStyle = 'rgba(5, 5, 10, 0.05)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#00d4ff'; ctx.font = fontSize + 'px monospace';
+            drops.forEach((y, i) => { const text = chars[Math.floor(Math.random() * chars.length)];
+                ctx.fillText(text, i * fontSize, y * fontSize);
+                if (y * fontSize > canvas.height && Math.random() > 0.975) drops[i] = 0; drops[i]++; });
+        }
+        setInterval(drawMatrix, 35);
+        window.addEventListener('resize', () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; });
+    </script>
+</body>
+</html>'''
+
+TARGETS_TEMPLATE = '''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎯 TARGETS | TORIKUL SYSTEM</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background: linear-gradient(135deg, #060417, #0e0b30, #130a24); min-height: 100vh; color: #fff; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; padding-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .logo { font-size: 2.5rem; font-weight: 800; background: linear-gradient(135deg, #00d4ff, #7f00ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .logo i { -webkit-text-fill-color: initial; color: #00d4ff; }
+        .search-box { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .search-box input { padding: 10px 16px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; background: rgba(0,0,0,0.4); color: #fff; font-size: 0.95rem; font-family: monospace; outline: none; min-width: 180px; transition: 0.3s; }
+        .search-box input:focus { border-color: #00d4ff; box-shadow: 0 0 20px rgba(0,212,255,0.1); }
+        .search-box button { padding: 10px 16px; border: none; border-radius: 8px; background: linear-gradient(135deg, #00d4ff, #7f00ff); color: #fff; font-weight: 600; cursor: pointer; transition: 0.3s; font-size: 0.9rem; }
+        .search-box button:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(0,212,255,0.3); }
+        .target-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px; margin-top: 25px; }
+        .target-card { background: rgba(20, 20, 50, 0.7); border-radius: 16px; overflow: hidden; border: 1px solid rgba(255,255,255,0.06); backdrop-filter: blur(10px); transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); animation: fadeIn 0.5s ease forwards; opacity: 0; transform: translateY(20px); cursor: pointer; }
+        .target-card:nth-child(1) { animation-delay: 0.05s; }
+        .target-card:nth-child(2) { animation-delay: 0.10s; }
+        .target-card:nth-child(3) { animation-delay: 0.15s; }
+        .target-card:nth-child(4) { animation-delay: 0.20s; }
+        .target-card:nth-child(5) { animation-delay: 0.25s; }
+        .target-card:nth-child(6) { animation-delay: 0.30s; }
+        .target-card:nth-child(7) { animation-delay: 0.35s; }
+        .target-card:nth-child(8) { animation-delay: 0.40s; }
+        @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
+        .target-card:hover { transform: translateY(-6px) scale(1.02); border-color: rgba(0, 212, 255, 0.4); box-shadow: 0 15px 50px rgba(0, 212, 255, 0.15); }
+        .target-card img { width: 100%; height: auto; display: block; border-bottom: 1px solid rgba(255,255,255,0.05); pointer-events: none; }
+        .target-card .info { padding: 12px 14px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px; background: rgba(0,0,0,0.3); }
+        .target-card .info .uid { font-family: monospace; font-weight: bold; color: #00d4ff; font-size: 1rem; }
+        .target-card .info .type { font-size: 0.6rem; background: rgba(255,255,255,0.08); padding: 2px 10px; border-radius: 10px; color: rgba(255,255,255,0.4); text-transform: uppercase; }
+        .target-card .info .time { font-size: 0.7rem; color: rgba(255,255,255,0.3); display: flex; align-items: center; gap: 4px; }
+        .target-card .info .time i { color: #ff007f; }
+        .target-card .info .added-info { font-size: 0.55rem; color: rgba(255,0,127,0.6); background: rgba(255,0,127,0.08); padding: 2px 8px; border-radius: 6px; width: 100%; margin-top: 4px; text-align: center; }
+        .target-card .info .squad-leader { font-size: 0.6rem; background: rgba(255, 0, 127, 0.15); padding: 2px 8px; border-radius: 10px; color: #ff007f; font-family: monospace; }
+        .search-result { margin-top: 20px; padding: 15px; background: rgba(0,212,255,0.05); border-radius: 12px; border: 1px solid rgba(0,212,255,0.1); }
+        .search-result .result-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; background: rgba(0,0,0,0.3); border-radius: 8px; flex-wrap: wrap; gap: 10px; }
+        .empty-state { color: rgba(255,255,255,0.3); text-align: center; padding: 60px 20px; width: 100%; font-size: 1.2rem; }
+        .empty-state i { font-size: 3rem; display: block; margin-bottom: 15px; color: rgba(255,255,255,0.1); }
+        .btn { padding: 8px 16px; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: 0.3s; font-size: 0.85rem; }
+        .btn-outline { background: transparent; border: 1px solid rgba(255,255,255,0.15); color: #fff; }
+        .btn-outline:hover { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.3); }
+        .count-badge { background: rgba(0, 212, 255, 0.15); padding: 6px 16px; border-radius: 20px; font-size: 0.95rem; color: #00d4ff; }
+        .footer { text-align: center; color: rgba(255,255,255,0.15); font-size: 0.75rem; margin-top: 30px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.03); }
+        .refresh-btn { background: rgba(0,212,255,0.1); border: 1px solid rgba(0,212,255,0.2); color: #00d4ff; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 0.8rem; transition: 0.3s; }
+        .refresh-btn:hover { background: rgba(0,212,255,0.2); }
+
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); z-index: 1000; justify-content: center; align-items: center; padding: 20px; animation: fadeIn 0.3s ease; }
+        .modal-overlay.active { display: flex; }
+        .modal-box { background: rgba(15, 15, 40, 0.95); border: 1px solid rgba(0, 212, 255, 0.2); border-radius: 20px; max-width: 700px; width: 100%; max-height: 90vh; overflow-y: auto; padding: 30px; position: relative; box-shadow: 0 20px 80px rgba(0,0,0,0.8); animation: slideUp 0.3s ease; }
+        @keyframes slideUp { from { transform: translateY(30px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .modal-close { position: absolute; top: 15px; right: 20px; font-size: 1.8rem; color: rgba(255,255,255,0.4); cursor: pointer; transition: 0.3s; background: none; border: none; }
+        .modal-close:hover { color: #ff007f; transform: rotate(90deg); }
+        .modal-header { display: flex; gap: 20px; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .modal-avatar { width: 80px; height: 80px; border-radius: 50%; border: 3px solid #ff007f; object-fit: cover; }
+        .modal-name { font-size: 1.8rem; font-weight: 700; background: linear-gradient(135deg, #00d4ff, #7f00ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .modal-uid { font-family: monospace; color: rgba(255,255,255,0.5); font-size: 0.9rem; }
+        .modal-level { background: rgba(255,0,127,0.2); color: #ff007f; padding: 2px 12px; border-radius: 12px; font-weight: 600; font-size: 0.8rem; }
+        .modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 15px 0; }
+        .modal-item { background: rgba(255,255,255,0.03); padding: 10px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.04); }
+        .modal-item .label { font-size: 0.6rem; text-transform: uppercase; color: rgba(255,255,255,0.3); letter-spacing: 1px; }
+        .modal-item .value { font-weight: 600; font-size: 0.95rem; margin-top: 2px; color: #fff; }
+        .modal-item .value.highlight { color: #00d4ff; }
+        .modal-item .value.gold { color: #ffd700; }
+        .modal-item .value.pink { color: #ff007f; }
+        .modal-item .value.green { color: #00ffcc; }
+        .modal-clan { background: rgba(0,212,255,0.05); padding: 12px 16px; border-radius: 10px; border: 1px solid rgba(0,212,255,0.08); margin: 10px 0; }
+        .modal-clan .clan-name { color: #00d4ff; font-weight: 600; font-size: 1.1rem; }
+        .modal-clan .clan-detail { color: rgba(255,255,255,0.4); font-size: 0.75rem; margin-top: 2px; }
+        .modal-signature { color: rgba(255,255,255,0.5); font-style: italic; font-size: 0.85rem; padding: 10px; background: rgba(0,0,0,0.3); border-radius: 8px; border-left: 3px solid #ff007f; margin: 10px 0; word-break: break-word; }
+        .modal-loading { text-align: center; padding: 40px; color: rgba(255,255,255,0.3); }
+        .modal-loading i { font-size: 2.5rem; display: block; margin-bottom: 15px; color: #00d4ff; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .modal-error { text-align: center; padding: 30px; color: #ff4444; }
+        .modal-error i { font-size: 2.5rem; display: block; margin-bottom: 15px; }
+
+        @media (max-width: 600px) { .target-grid { grid-template-columns: 1fr; } .header { flex-direction: column; text-align: center; } .search-box { width: 100%; justify-content: center; } .search-box input { flex: 1; min-width: 120px; } .modal-grid { grid-template-columns: 1fr; } .modal-header { flex-direction: column; text-align: center; } }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <div class="logo"><i class="fas fa-crosshairs"></i> TARGETS</div>
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="🔍 Search UID..." onkeypress="if(event.key==='Enter') searchTarget()">
+                <button onclick="searchTarget()"><i class="fas fa-search"></i></button>
+                <button onclick="clearSearch()" class="btn btn-outline" style="padding: 8px 12px;"><i class="fas fa-times"></i></button>
+            </div>
+            <span class="count-badge"><i class="fas fa-bullseye"></i> <span id="targetCount">0</span> Active</span>
+            <button class="refresh-btn" onclick="refreshTargets()"><i class="fas fa-sync-alt"></i> Refresh</button>
+            <a href="/targets/logout" class="btn btn-outline"><i class="fas fa-sign-out-alt"></i> EXIT</a>
+        </div>
+    </div>
+    <div id="searchResult" style="display:none;" class="search-result">
+        <h4 style="margin-bottom:10px;color:#00d4ff;"><i class="fas fa-search"></i> Search Result</h4>
+        <div id="searchResultContent"></div>
+    </div>
+    <div id="targetGrid" class="target-grid">
+        <div class="empty-state"><i class="fas fa-crosshairs"></i> No active targets</div>
+    </div>
+    <div class="footer">TORIKUL TARGET VIEWER v1.0 | <i class="fas fa-bolt" style="color:#00d4ff;"></i> Click on any target card for full profile</div>
+</div>
+
+<div class="modal-overlay" id="profileModal">
+    <div class="modal-box">
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+        <div id="modalContent">
+            <div class="modal-loading"><i class="fas fa-spinner"></i> Loading profile...</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const targetGrid = document.getElementById('targetGrid');
+    const targetCount = document.getElementById('targetCount');
+
+    function formatDate(timestamp) {
+        if (!timestamp) return 'N/A';
+        try {
+            const d = new Date(parseInt(timestamp) * 1000);
+            return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        } catch { return timestamp; }
+    }
+
+    function getRankEmoji(rank) {
+        if (rank <= 100) return '🏆';
+        if (rank <= 500) return '🥇';
+        if (rank <= 1000) return '🥈';
+        if (rank <= 2000) return '🥉';
+        return '⭐';
+    }
+
+    function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function renderTargets(targets) {
+        targetCount.textContent = targets.length;
+        if (!targets || targets.length === 0) {
+            targetGrid.innerHTML = '<div class="empty-state"><i class="fas fa-crosshairs"></i> No active targets</div>';
+            return;
+        }
+        targetGrid.innerHTML = targets.map((t, index) => `
+            <div class="target-card" style="animation-delay: ${index * 0.05}s" onclick="openProfile('${t.uid}')">
+                <img src="${t.banner_url}" alt="Banner for ${t.uid}" loading="lazy" onerror="this.src='/api/profile/${t.uid}'">
+                <div class="info">
+                    <span class="uid">🎯 ${t.uid}</span>
+                    ${t.squad_leader ? `<span class="squad-leader">👥 L:${t.squad_leader}</span>` : ''}
+                    ${t.is_squad_leader ? `<span class="squad-leader">👑 SQUAD LEADER</span>` : ''}
+                    ${t.original_target ? `<span class="squad-leader">🎯 From:${t.original_target}</span>` : ''}
+                    <span class="type">${t.type}</span>
+                    <span class="time"><i class="fas fa-clock"></i> ${t.elapsed_minutes}m</span>
+                    <div class="added-info">👤 ADDED BY: ${t.added_by || 'TORIKUL'} ${t.added_time ? '| ' + t.added_time : ''}</div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function refreshTargets() {
+        fetch('/api/targets?pass=HUNTERTORIKUL')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    renderTargets(data.targets);
+                    const btn = document.querySelector('.refresh-btn');
+                    const orig = btn.innerHTML;
+                    btn.innerHTML = '<i class="fas fa-check"></i> Updated';
+                    setTimeout(() => btn.innerHTML = orig, 2000);
+                }
+            })
+            .catch(() => {});
+    }
+
+    async function openProfile(uid) {
+        const modal = document.getElementById('profileModal');
+        const content = document.getElementById('modalContent');
+        modal.classList.add('active');
+        content.innerHTML = `<div class="modal-loading"><i class="fas fa-spinner"></i> Loading profile...</div>`;
+
+        try {
+            const resp = await fetch(`/api/profile-info/${uid}`);
+            
+            if (!resp.ok) {
+                const errorData = await resp.json();
+                throw new Error(errorData.message || 'Failed to fetch profile');
+            }
+            
+            const data = await resp.json();
+
+            const basic = data.basicInfo || {};
+            const clan = data.clanBasicInfo || {};
+            const captain = data.captainBasicInfo || {};
+            const social = data.socialInfo || {};
+            const credit = data.creditScoreInfo || {};
+            const diamond = data.diamondCostRes || {};
+            const pet = data.petInfo || {};
+
+            const nickname = basic.nickname || 'Unknown';
+            const level = basic.level || '?';
+            const rank = basic.rank || 'N/A';
+            const csRank = basic.csRank || 'N/A';
+            const badgeCnt = basic.badgeCnt || 0;
+            const liked = basic.liked || 0;
+            const accountAge = basic.accountAge || 'N/A';
+            const lastLogin = formatDate(basic.lastLoginAt);
+            const created = formatDate(basic.createAt);
+            const clanName = clan.clanName || 'No Guild';
+            const clanLevel = clan.clanLevel || '?';
+            const clanMembers = clan.memberNum || '?';
+            const clanCapacity = clan.capacity || '?';
+            const signature = social.signature || 'No signature';
+            const creditScore = credit.creditScore || '?';
+            const diamondCost = diamond.diamondCost || '?';
+            const petName = pet.name || 'No pet';
+            const petLevel = pet.level || '?';
+            const region = basic.region || 'N/A';
+            const clanId = clan.clanId || '';
+
+            const avatarUrl = basic.headPic ? `https://cdn.jsdelivr.net/gh/ShahGCreator/icon@main/PNG/${basic.headPic}.png` : '';
+
+            content.innerHTML = `
+                <div class="modal-header">
+                    ${avatarUrl ? `<img class="modal-avatar" src="${avatarUrl}" onerror="this.style.display='none'" alt="Avatar">` : `<div class="modal-avatar" style="background:linear-gradient(135deg,#ff007f,#7f00ff);display:flex;align-items:center;justify-content:center;font-size:2rem;">${nickname.charAt(0)}</div>`}
+                    <div>
+                        <div class="modal-name">${escapeHtml(nickname)}</div>
+                        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:4px;">
+                            <span class="modal-uid">UID: ${uid}</span>
+                            <span class="modal-level">Lv.${level}</span>
+                            <span style="font-size:0.7rem;color:rgba(255,255,255,0.3);">${region}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-grid">
+                    <div class="modal-item"><div class="label">🏆 BR Rank</div><div class="value highlight">${getRankEmoji(rank)} ${rank}</div></div>
+                    <div class="modal-item"><div class="label">⚔️ CS Rank</div><div class="value gold">${getRankEmoji(csRank)} ${csRank}</div></div>
+                    <div class="modal-item"><div class="label">📛 Badges</div><div class="value pink">${badgeCnt} badges</div></div>
+                    <div class="modal-item"><div class="label">❤️ Likes</div><div class="value green">${liked.toLocaleString()}</div></div>
+                    <div class="modal-item"><div class="label">📅 Account Age</div><div class="value">${accountAge}</div></div>
+                    <div class="modal-item"><div class="label">💎 Diamond Cost</div><div class="value gold">${diamondCost}</div></div>
+                    <div class="modal-item"><div class="label">⭐ Credit Score</div><div class="value ${creditScore >= 90 ? 'green' : creditScore >= 70 ? 'gold' : 'pink'}">${creditScore}</div></div>
+                    <div class="modal-item"><div class="label">🐾 Pet</div><div class="value">${escapeHtml(petName)} (Lv.${petLevel})</div></div>
+                    <div class="modal-item" style="grid-column:1/-1;"><div class="label">🕐 Last Login</div><div class="value" style="color:rgba(255,255,255,0.6);">${lastLogin}</div></div>
+                    <div class="modal-item" style="grid-column:1/-1;"><div class="label">📆 Created</div><div class="value" style="color:rgba(255,255,255,0.4);">${created}</div></div>
+                </div>
+
+                <div class="modal-clan">
+                    <div class="clan-name">🏛️ ${escapeHtml(clanName)}</div>
+                    <div class="clan-detail">Level ${clanLevel} · ${clanMembers}/${clanCapacity} members</div>
+                    ${captain.nickname ? `<div class="clan-detail">👑 Leader: ${escapeHtml(captain.nickname)} (${captain.accountId})</div>` : ''}
+                    ${clanId ? `<div class="clan-detail" style="font-size:0.65rem;color:rgba(255,255,255,0.2);">Clan ID: ${clanId}</div>` : ''}
+                </div>
+
+                ${signature && signature !== 'No signature' ? `<div class="modal-signature">💬 "${escapeHtml(signature)}"</div>` : ''}
+
+                <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;border-top:1px solid rgba(255,255,255,0.05);padding-top:12px;">
+                    <span style="font-size:0.6rem;color:rgba(255,255,255,0.2);">📡 Data from mahir-info-api.vercel.app</span>
+                    <span style="font-size:0.6rem;color:rgba(255,255,255,0.1);">|</span>
+                    <span style="font-size:0.6rem;color:rgba(255,0,127,0.3);">❤️ TORIKUL SYSTEM</span>
+                </div>
+            `;
+        } catch (error) {
+            content.innerHTML = `
+                <div class="modal-error">
+                    <i class="fas fa-exclamation-circle"></i>
+                    <div>Failed to load profile</div>
+                    <div style="font-size:0.7rem;color:rgba(255,255,255,0.3);margin-top:8px;">${escapeHtml(error.message)}</div>
+                    <button onclick="openProfile('${uid}')" style="margin-top:15px;padding:8px 20px;background:linear-gradient(135deg,#ff007f,#7f00ff);border:none;border-radius:8px;color:#fff;cursor:pointer;">Retry</button>
+                </div>
+            `;
+        }
+    }
+
+    function closeModal() {
+        document.getElementById('profileModal').classList.remove('active');
+    }
+
+    document.getElementById('profileModal').addEventListener('click', function(e) {
+        if (e.target === this) closeModal();
+    });
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closeModal();
+    });
+
+    function searchTarget() {
+        const uid = document.getElementById('searchInput').value.trim();
+        if (!uid || !/^\\d+$/.test(uid)) {
+            alert('Please enter a valid UID!');
+            return;
+        }
+        fetch(`/api/targets?pass=HUNTERTORIKUL`)
+            .then(r => r.json())
+            .then(data => {
+                const resultDiv = document.getElementById('searchResult');
+                const contentDiv = document.getElementById('searchResultContent');
+                if (data.success) {
+                    const target = data.targets.find(t => t.uid === uid);
+                    if (target) {
+                        resultDiv.style.display = 'block';
+                        contentDiv.innerHTML = `
+                            <div class="result-item">
+                                <div>
+                                    <strong style="color:#00d4ff;font-family:monospace;font-size:1.1rem;">🎯 ${target.uid}</strong>
+                                    <button onclick="openProfile('${target.uid}')" style="margin-left:10px;padding:4px 12px;background:linear-gradient(135deg,#00d4ff,#7f00ff);border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.7rem;">📋 View Profile</button>
+                                </div>
+                                <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:0.8rem;color:rgba(255,255,255,0.5);">
+                                    ${target.squad_leader ? `<span>👥 Leader: ${target.squad_leader}</span>` : ''}
+                                    ${target.is_squad_leader ? `<span>👑 SQUAD LEADER</span>` : ''}
+                                    ${target.original_target ? `<span>🎯 From: ${target.original_target}</span>` : ''}
+                                    ${target.mode ? `<span>🎮 ${target.mode}</span>` : ''}
+                                    ${target.time_playing ? `<span>⏱ ${target.time_playing}</span>` : ''}
+                                    ${target.last_check ? `<span>🕐 ${target.last_check}</span>` : ''}
+                                    <span style="background:rgba(255,255,255,0.05);padding:2px 8px;border-radius:6px;">${target.type}</span>
+                                    <span style="background:rgba(255,0,127,0.1);padding:2px 8px;border-radius:6px;color:#ff007f;">👤 ${target.added_by || 'TORIKUL'}</span>
+                                </div>
+                            </div>
+                        `;
+                    } else {
+                        resultDiv.style.display = 'block';
+                        contentDiv.innerHTML = `<div style="color:#ff4444;padding:10px;">❌ Target ${uid} not found in active targets</div>`;
+                    }
+                }
+            })
+            .catch(() => alert('Error searching target!'));
+    }
+
+    function clearSearch() {
+        document.getElementById('searchResult').style.display = 'none';
+        document.getElementById('searchInput').value = '';
+    }
+
+    fetch('/api/targets?pass=HUNTERTORIKUL')
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) renderTargets(data.targets);
+        })
+        .catch(() => {});
+</script>
+</body>
+</html>'''
+
+HTML_TEMPLATE = '''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔥 TORIKUL SYSTEM - SPAM CONTROL</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background: linear-gradient(135deg, #060417, #0e0b30, #130a24); min-height: 100vh; color: #fff; padding: 20px; }
+        #matrix-canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 0; opacity: 0.3; }
+        .container { max-width: 1400px; margin: 0 auto; position: relative; z-index: 1; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 20px; flex-wrap: wrap; gap: 15px; }
+        .logo { font-size: 2.5rem; font-weight: 800; background: linear-gradient(135deg, #ff007f, #7f00ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .logo i { -webkit-text-fill-color: initial; color: #ff007f; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 15px; margin-bottom: 25px; }
+        .stat-card { background: rgba(255,255,255,0.03); backdrop-filter: blur(15px); border-radius: 12px; padding: 15px; text-align: center; border: 1px solid rgba(255,255,255,0.06); transition: 0.3s; }
+        .stat-card:hover { transform: translateY(-3px); border-color: rgba(255,0,127,0.2); }
+        .stat-card i { font-size: 1.5rem; margin-bottom: 5px; color: #ff007f; }
+        .stat-card h3 { font-size: 0.7rem; color: rgba(255,255,255,0.4); margin-bottom: 3px; text-transform: uppercase; letter-spacing: 1px; }
+        .stat-card .value { font-size: 1.8rem; font-weight: 800; }
+        .controls-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 25px; }
+        .control-card { background: rgba(255,255,255,0.02); backdrop-filter: blur(15px); border-radius: 12px; padding: 20px; border: 1px solid rgba(255,255,255,0.06); }
+        .control-card h3 { font-size: 0.95rem; margin-bottom: 12px; display: flex; align-items: center; gap: 10px; }
+        .control-card h3 i { color: #ff007f; }
+        .input-group { display: flex; gap: 10px; flex-wrap: wrap; }
+        .input-group input { flex: 1; padding: 10px 14px; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; background: rgba(0,0,0,0.4); color: #fff; font-size: 0.9rem; font-family: monospace; outline: none; transition: 0.3s; min-width: 120px; }
+        .input-group input:focus { border-color: #ff007f; box-shadow: 0 0 15px rgba(255,0,127,0.1); }
+        .btn { padding: 10px 18px; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; transition: all 0.3s; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 6px; }
+        .btn-primary { background: linear-gradient(135deg, #ff007f, #7f00ff); color: #fff; }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(255,0,127,0.3); }
+        .btn-danger { background: linear-gradient(135deg, #ff0844, #ffb199); color: #fff; }
+        .btn-danger:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(255,8,68,0.3); }
+        .btn-warning { background: linear-gradient(135deg, #ffaa00, #ff6600); color: #000; }
+        .btn-warning:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(255,170,0,0.3); }
+        .btn-outline { background: transparent; border: 1px solid rgba(255,255,255,0.15); color: #fff; }
+        .btn-outline:hover { background: rgba(255,255,255,0.05); }
+        .btn-sm { padding: 6px 12px; font-size: 0.75rem; }
+        .btn-success { background: linear-gradient(135deg, #00b09b, #96c93d); color: #fff; }
+        .btn-success:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(0,176,155,0.3); }
+        .upload-area { border: 2px dashed rgba(255,255,255,0.08); border-radius: 8px; padding: 15px; text-align: center; cursor: pointer; transition: 0.3s; }
+        .upload-area:hover { border-color: rgba(255,0,127,0.3); background: rgba(255,0,127,0.03); }
+        .upload-area.dragover { border-color: #ff007f; background: rgba(255,0,127,0.05); }
+        .upload-area i { font-size: 1.5rem; color: rgba(255,255,255,0.2); }
+        .upload-area p { font-size: 0.8rem; color: rgba(255,255,255,0.3); }
+        .active-list { max-height: 300px; overflow-y: auto; margin-top: 10px; }
+        .active-item { background: rgba(30,30,40,0.6); padding: 10px 14px; margin: 5px 0; border-radius: 8px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; border-left: 3px solid #ff007f; gap: 8px; }
+        .active-uid { font-family: monospace; font-weight: bold; color: #ff007f; font-size: 13px; }
+        .active-status { font-size: 10px; padding: 2px 10px; border-radius: 10px; }
+        .active-status.solo { background: rgba(0, 255, 204, 0.2); color: #00ffcc; }
+        .active-status.insquad { background: rgba(0, 212, 255, 0.2); color: #00d4ff; }
+        .active-status.ingame { background: rgba(255, 170, 0, 0.2); color: #ffaa00; }
+        .active-status.in_room { background: rgba(255, 100, 0, 0.2); color: #ff6400; }
+        .active-status.offline { background: rgba(255, 68, 68, 0.2); color: #ff4444; }
+        .active-status.unknown { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.4); }
+        .active-type { font-size: 10px; color: rgba(255,255,255,0.4); background: rgba(255,255,255,0.05); padding: 2px 10px; border-radius: 10px; }
+        .active-time { font-size: 10px; color: rgba(255,255,255,0.3); }
+        .stop-small { background: #eb3349; color: white; border: none; padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 10px; font-weight: bold; transition: 0.2s; }
+        .stop-small:hover { background: #c0392b; }
+        .account-item { background: rgba(30,30,40,0.4); padding: 3px 10px; margin: 3px 4px; border-radius: 6px; font-family: monospace; font-size: 10px; color: #4facfe; display: inline-block; }
+        .console-box { background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.05); border-radius: 10px; height: 200px; padding: 12px; font-family: 'Courier New', monospace; font-size: 0.7rem; color: #00ffcc; overflow-y: auto; }
+        .console-box .line { opacity: 0; animation: fadeLine 0.3s forwards; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0; }
+        @keyframes fadeLine { to { opacity: 1; } }
+        .toast { position: fixed; bottom: 20px; right: 20px; background: rgba(0,0,0,0.9); padding: 12px 20px; border-radius: 8px; z-index: 999; color:#fff; display:flex; align-items:center; gap:8px; border:1px solid rgba(255,255,255,0.1); animation: slideIn 0.3s cubic-bezier(0.175,0.885,0.32,1.275); }
+        .toast.success { border-color: #00b09b; }
+        .toast.error { border-color: #ff0844; }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+        .status-dot.online { background: #00ffcc; animation: pulse 1s infinite; }
+        .status-dot.offline { background: #ff4444; }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+        .feature-badge { display: inline-block; background: rgba(0, 212, 255, 0.1); color: #00d4ff; padding: 2px 10px; border-radius: 10px; font-size: 0.6rem; margin-left: 5px; }
+        .footer { text-align: center; color: rgba(255,255,255,0.15); font-size: 0.7rem; margin-top: 25px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.03); }
+        .console-uid { color: #ff007f; font-weight: bold; }
+        .console-success { color: #00ffcc; }
+        .console-error { color: #ff3366; }
+        .console-warning { color: #ffaa00; }
+        .console-info { color: #4facfe; }
+        .reset-info { font-size: 0.7rem; color: rgba(255,255,255,0.3); margin-top: 5px; }
+        @media (max-width: 768px) { .controls-grid { grid-template-columns: 1fr; } .input-group { flex-direction: column; } .btn { width: 100%; justify-content: center; } .header { flex-direction: column; text-align: center; } }
+    </style>
+</head>
+<body>
+    <canvas id="matrix-canvas"></canvas>
+    <div class="container">
+        <div class="header">
+            <div>
+                <div class="logo"><i class="fas fa-bolt"></i> TORIKUL SYSTEM</div>
+                <div style="color: rgba(255,255,255,0.3); font-size:0.8rem;">
+                    SPAM CONTROL ENGINE v3.0
+                    <span class="feature-badge"><i class="fas fa-sync"></i> Auto Status Check (5s)</span>
+                    <span class="feature-badge"><i class="fas fa-users"></i> Squad Auto-Join</span>
+                    <span class="feature-badge"><i class="fas fa-layer-group"></i> ROOM+GROUP</span>
+                    <span class="feature-badge"><i class="fas fa-clock"></i> Auto Reset: 10min</span>
+                </div>
+            </div>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                <a href="/targets" class="btn btn-outline btn-sm"><i class="fas fa-crosshairs"></i> TARGETS</a>
+                <span class="status-dot online" id="statusDot"></span>
+                <span id="statusText" style="color:rgba(255,255,255,0.4);font-size:0.8rem;">Live</span>
+                <a href="/logout" class="btn btn-outline btn-sm"><i class="fas fa-sign-out-alt"></i> LOGOUT</a>
+            </div>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card"><i class="fas fa-bullseye"></i><h3>ACTIVE TARGETS</h3><div class="value" id="activeCount">0</div></div>
+            <div class="stat-card"><i class="fas fa-robot"></i><h3>BOT ACCOUNTS</h3><div class="value" id="botCount">0</div></div>
+            <div class="stat-card"><i class="fas fa-users"></i><h3>SQUAD LEADERS</h3><div class="value" id="squadCount">0</div></div>
+            <div class="stat-card"><i class="fas fa-file-alt"></i><h3>ACCOUNTS IN FILE</h3><div class="value" id="fileAccCount">0</div></div>
+        </div>
+
+        <div class="controls-grid">
+            <div class="control-card">
+                <h3><i class="fas fa-upload" style="color:#ff007f;"></i> UPLOAD ACCOUNTS</h3>
+                <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                    <div class="upload-area" id="accsUpload" style="flex:1; min-width:150px;">
+                        <i class="fas fa-file-alt"></i>
+                        <p>📁 accs.txt (ACCOUNTS)</p>
+                        <input type="file" id="accsFileInput" accept=".txt" style="display:none;">
+                        <div id="accsStatus" style="font-size:0.7rem;color:rgba(255,255,255,0.3);margin-top:4px;">No file</div>
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:6px; min-width:120px;">
+                        <button class="btn btn-success btn-sm" onclick="resetAccounts()"><i class="fas fa-sync-alt"></i> RESET ACCOUNTS</button>
+                        <div class="reset-info"><i class="fas fa-clock"></i> Auto reset every 10 min</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="controls-grid">
+            <div class="control-card">
+                <h3><i class="fas fa-fire" style="color:#ff007f;"></i> START SPAM</h3>
+                <div style="font-size:0.7rem; color:rgba(255,255,255,0.4); margin-bottom:8px;">Room Spam + Badge Spam (accs.txt) | Group Spam + Badge Spam</div>
+                <div class="input-group">
+                    <input type="text" id="spamUid" placeholder="Target UID(s) (comma separated)">
+                    <button class="btn btn-primary" onclick="startSpam()"><i class="fas fa-play"></i> START</button>
+                </div>
+            </div>
+            <div class="control-card">
+                <h3><i class="fas fa-stop" style="color:#ff0844;"></i> STOP</h3>
+                <div class="input-group">
+                    <input type="text" id="stopUid" placeholder="Target UID to stop">
+                    <button class="btn btn-danger" onclick="stopSingleSpam()"><i class="fas fa-power-off"></i> STOP</button>
+                </div>
+                <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
+                    <button class="btn btn-warning" onclick="stopAllSpam()" style="flex:1;"><i class="fas fa-stop-circle"></i> STOP ALL</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="controls-grid">
+            <div class="control-card">
+                <h3><i class="fas fa-file" style="color:#4facfe;"></i> FILES</h3>
+                <div style="background:rgba(0,0,0,0.3); padding:10px; border-radius:8px; font-size:0.8rem;">
+                    <div>📁 accs.txt (ACCOUNTS) - <span id="accCount" style="color:rgba(255,255,255,0.4);">0 accounts</span></div>
+                    <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+                        <button class="btn btn-outline btn-sm" onclick="downloadAccs()"><i class="fas fa-download"></i> accs.txt</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="control-card" style="margin-bottom:20px;">
+            <h3><i class="fas fa-list"></i> ACTIVE TARGETS <span style="font-size:0.6rem; color:rgba(255,255,255,0.3);">(Status auto-check every 5s)</span></h3>
+            <div id="activeList" class="active-list">
+                <div style="color:rgba(255,255,255,0.3); text-align:center; padding:15px;">No active targets</div>
+            </div>
+        </div>
+
+        <div class="control-card" style="margin-bottom:20px;">
+            <h3><i class="fas fa-terminal"></i> LIVE CONSOLE</h3>
+            <div class="console-box" id="consoleBox">
+                <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-success">TORIKUL SPAM ENGINE Initialized</span></div>
+                <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-info">Status check every 5 seconds</span></div>
+                <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-info">Squad auto-join enabled (30 min duration)</span></div>
+                <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-info">Accounts: accs.txt</span></div>
+                <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-info">Auto reset every 10 minutes</span></div>
+            </div>
+        </div>
+
+        <div class="control-card">
+            <h3><i class="fas fa-robot"></i> CONNECTED ACCOUNTS</h3>
+            <div id="accountsContainer">
+                <span style="color:rgba(255,255,255,0.3); font-size:0.8rem;">Loading...</span>
+            </div>
+        </div>
+
+        <div class="footer">TORIKUL SYSTEM v3.0 | <i class="fas fa-code"></i> Engine by TORIKUL | Status Check: 5s | Squad Auto-Join: 30min | Auto Reset: 10min | ROOM+GROUP</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('matrix-canvas'); const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%&'.split('');
+        const fontSize = 12; const columns = canvas.width / fontSize; const drops = Array(Math.floor(columns)).fill(1);
+        function drawMatrix() {
+            ctx.fillStyle = 'rgba(5, 5, 10, 0.05)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#ff007f'; ctx.font = fontSize + 'px monospace';
+            drops.forEach((y, i) => {
+                const text = chars[Math.floor(Math.random() * chars.length)];
+                ctx.globalAlpha = 0.3 + Math.random() * 0.3;
+                ctx.fillText(text, i * fontSize, y * fontSize);
+                ctx.globalAlpha = 1;
+                if (y * fontSize > canvas.height && Math.random() > 0.975) drops[i] = 0; drops[i]++;
+            });
+        }
+        setInterval(drawMatrix, 50);
+
+        function showToast(msg, type='info') {
+            const t = document.createElement('div');
+            t.className = `toast ${type}`;
+            const icons = { success: 'fa-check-circle', error: 'fa-exclamation-circle', info: 'fa-info-circle' };
+            t.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i> ${msg}`;
+            document.body.appendChild(t);
+            setTimeout(() => t.remove(), 4000);
+        }
+
+        function resetAccounts() {
+            if (!confirm('⚠️ Reset all accounts? This will disconnect and reconnect all bots.')) return;
+            showToast('Resetting accounts...', 'info');
+            fetch('/api/reset-accounts', { method: 'POST' })
+                .then(r => r.json())
+                .then(d => {
+                    if (d.success) {
+                        showToast(d.message, 'success');
+                        refreshStatus();
+                    } else {
+                        showToast(d.message || 'Reset failed', 'error');
+                    }
+                })
+                .catch(() => showToast('Error resetting accounts', 'error'));
+        }
+
+        function getAccountCount() {
+            fetch('/api/accounts/count')
+                .then(r => r.json())
+                .then(d => {
+                    if (d.success) {
+                        document.getElementById('fileAccCount').textContent = d.total;
+                        document.getElementById('accCount').textContent = `${d.total} accounts (Group: ${d.group}, Room: ${d.room})`;
+                    }
+                })
+                .catch(() => {});
+        }
+
+        function uploadFile(file) {
+            const fd = new FormData(); fd.append('file', file);
+            fetch('/api/upload/accs', { method: 'POST', body: fd })
+                .then(r => r.json())
+                .then(d => {
+                    if (d.success) {
+                        document.getElementById('accsStatus').innerHTML = `✅ ${d.total} accounts`;
+                        showToast(d.message, 'success');
+                        refreshStatus();
+                        getAccountCount();
+                    } else showToast(d.message, 'error');
+                }).catch(() => showToast('Upload failed', 'error'));
+        }
+
+        document.getElementById('accsUpload').addEventListener('click', () => document.getElementById('accsFileInput').click());
+        document.getElementById('accsFileInput').addEventListener('change', function(e) { if (this.files.length) uploadFile(this.files[0]); });
+
+        const uploadEl = document.getElementById('accsUpload');
+        uploadEl.addEventListener('dragover', e => { e.preventDefault(); uploadEl.classList.add('dragover'); });
+        uploadEl.addEventListener('dragleave', () => uploadEl.classList.remove('dragover'));
+        uploadEl.addEventListener('drop', e => { e.preventDefault(); uploadEl.classList.remove('dragover'); const files = e.dataTransfer.files; if (files.length) uploadFile(files[0]); });
+
+        function startSpam() {
+            const uid = document.getElementById('spamUid').value.trim();
+            if (!uid) { showToast('Enter target UID(s)!', 'error'); return; }
+            const uids = uid.split(',').map(u => u.trim()).filter(u => /^\\d+$/.test(u));
+            if (!uids.length) { showToast('Invalid UID(s)!', 'error'); return; }
+            fetch('/api/spam/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uid: uid }) })
+                .then(r => r.json())
+                .then(d => { if (d.success) { showToast(`Started spam on ${uids.length} target(s)`, 'success'); refreshStatus(); } else showToast(d.message || 'Failed', 'error'); })
+                .catch(() => showToast('Error', 'error'));
+        }
+
+        function stopSingleSpam() {
+            const uid = document.getElementById('stopUid').value.trim();
+            if (!uid) { showToast('Enter target UID!', 'error'); return; }
+            if (!/^\\d+$/.test(uid)) { showToast('Invalid UID!', 'error'); return; }
+            fetch(`/api/stop/${uid}`)
+                .then(r => r.json())
+                .then(d => { if (d.success) { showToast(d.message, 'success'); document.getElementById('stopUid').value = ''; refreshStatus(); } else showToast(d.message, 'error'); })
+                .catch(() => showToast('Error', 'error'));
+        }
+
+        function stopAllSpam() { if (!confirm('⚠️ Stop all spam?')) return; fetch('/api/stop-all').then(r => r.json()).then(d => { if (d.success) { showToast(d.message, 'success'); refreshStatus(); } }).catch(() => showToast('Error', 'error')); }
+        function downloadAccs() { window.location.href = '/api/get/accs'; }
+        function quickStop(uid) { document.getElementById('stopUid').value = uid; stopSingleSpam(); }
+
+        function getStatusLabel(status) {
+            const labels = { 'SOLO': '🟢 Solo', 'INSQUAD': '🔵 In Squad', 'INGAME': '🟡 In Game', 'IN_ROOM': '🟠 In Room', 'OFFLINE': '⚪ Offline', 'SOCIAL_ISLAND': '🟣 Social Island', 'MATCHMAKING': '🟣 Matchmaking', 'UNKNOWN': '⚪ Unknown' };
+            return labels[status] || '⚪ Unknown';
+        }
+        function getStatusClass(status) { const map = { 'SOLO': 'solo', 'INSQUAD': 'insquad', 'INGAME': 'ingame', 'IN_ROOM': 'in_room', 'OFFLINE': 'offline' }; return map[status] || 'unknown'; }
+
+        function refreshStatus() {
+            fetch('/api/status?pass=TORIKULJOD')
+                .then(r => r.json())
+                .then(d => {
+                    if (d.success) {
+                        const s = d.data;
+                        document.getElementById('activeCount').textContent = s.active_count || 0;
+                        document.getElementById('botCount').textContent = s.accounts_count || 0;
+                        const squadCount = s.active_targets ? s.active_targets.filter(t => t.is_squad_leader).length : 0;
+                        document.getElementById('squadCount').textContent = squadCount;
+                        
+                        const list = document.getElementById('activeList');
+                        if (s.active_targets && s.active_targets.length > 0) {
+                            list.innerHTML = s.active_targets.map(t => `
+                                <div class="active-item">
+                                    <div>
+                                        <span class="active-uid">🎯 ${t.uid}</span>
+                                        <span class="active-status ${getStatusClass(t.status)}">${t.status_display || getStatusLabel(t.status)}</span>
+                                        ${t.is_squad_leader ? `<span style="font-size:10px;color:#ffd700;">👑 SQUAD LEADER</span>` : ''}
+                                        ${t.squad_leader ? `<span style="font-size:10px;color:#ff007f;">👥 L:${t.squad_leader}</span>` : ''}
+                                        <span class="active-type">${t.type}</span>
+                                        <span class="active-time">${t.elapsed_minutes}m</span>
+                                    </div>
+                                    <button class="stop-small" onclick="quickStop('${t.uid}')">STOP</button>
+                                </div>
+                            `).join('');
+                        } else {
+                            list.innerHTML = '<div style="color:rgba(255,255,255,0.3); text-align:center; padding:15px;">No active targets</div>';
+                        }
+                    }
+                }).catch(() => {});
+            fetch('/api/accounts?pass=TORIKULJOD')
+                .then(r => r.json())
+                .then(d => {
+                    if (d.success) {
+                        const c = document.getElementById('accountsContainer');
+                        if (d.accounts && d.accounts.length > 0) { c.innerHTML = d.accounts.map(a => `<span class="account-item">${a}</span>`).join(''); }
+                        else { c.innerHTML = '<span style="color:rgba(255,255,255,0.3);">No accounts connected</span>'; }
+                    }
+                }).catch(() => {});
+            
+            getAccountCount();
+        }
+
+        setInterval(refreshStatus, 5000);
+        refreshStatus();
+        document.getElementById('spamUid').addEventListener('keypress', e => { if (e.key === 'Enter') startSpam(); });
+        document.getElementById('stopUid').addEventListener('keypress', e => { if (e.key === 'Enter') stopSingleSpam(); });
+    </script>
+</body>
+</html>'''
+
+# ==================== MAIN ====================
+def main():
+    print(f"""
+    {C}{BOLD}
+    ╔══════════════════════════════════════════════════════════════════════╗
+    ║              🎯 TORIKUL SPAM SYSTEM v3.0 🎯                           ║
+    ║                                                                      ║
+    ║     📁 accs.txt → Room Spam + Group/Squad Spam + Badge Spam         ║
+    ║                                                                      ║
+    ║     ✅ Room Spam + Group/Squad *Badge Spam (accs.txt)                ║
+    ║     ✅ Auto Status Check: Every 3 seconds                           ║
+    ║     ✅ Squad Auto-Join: 30 minutes                                  ║
+    ║     ✅ Auto Account Reset: Every 10 minutes                         ║
+    ║     ✅ Target Viewer: /targets (Pass: HUNTERTORIKUL)                  ║
+    ║                                                                      ║
+    ║     🌐 Web Panel: http://127.0.0.1:8080                             ║
+    ║     🔑 Admin Pass: TORIKULJOD                                         ║
+    ║     🎯 Target Pass: HUNTERTORIKUL                                     ║
+    ║     👑 Developer: TORIKUL                                             ║
+    ╚══════════════════════════════════════════════════════════════════════╝
+    {RS}
+    """)
+
+    # ১. স্ট্যাটাস চেকার থ্রেড
+    status_thread = Thread(target=status_checker_thread, daemon=True)
+    status_thread.start()
+
+    # ২. অটো রিসেট থ্রেড চালু করা (প্রতি ১০ মিনিটে)
+    reset_thread = Thread(target=auto_reset_accounts, daemon=True)
+    reset_thread.start()
+
+    # ৩. প্রথমবার একাউন্ট রান করা
+    Thread(target=run_accounts, daemon=True).start()
+
+    # ৪. কিছুক্ষণ অপেক্ষা করে বাকি টার্গেটগুলো লোড করা
+    time.sleep(1)
+    clean_and_load_squad_targets()
+    load_saved_targets()
+
+    port = int(os.environ.get("PORT", 8080))
+    # ৫. ফ্লাস্ক অ্যাপ রান করা
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
+
+if __name__ == "__main__":
+    try:
+        import aiohttp
+    except ImportError:
+        os.system("pip install aiohttp")
+
+    try:
+        from protobuf_decoder.protobuf_decoder import Parser
+    except ImportError:
+        os.system("pip install protobuf-decoder")
+
+    main()
