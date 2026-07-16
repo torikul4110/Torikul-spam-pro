@@ -18,7 +18,7 @@ from xC4 import *
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==================== LOGIN CONFIG ====================
-ADMIN_PASSWORD = "MAHIRJOD"
+ADMIN_PASSWORD = "TORIKULJOD"
 SECRET_KEY = "mahir_system_secret_key_2024"
 
 # ==================== ফ্লাস্ক অ্যাপ ====================
@@ -49,7 +49,7 @@ ACCOUNT_REFRESH_INTERVAL = 10 * 60
 
 ACCOUNTS_FILE = "accs.txt"
 SQUAD_DATA_FILE = "squad_data.json"
-TARGETS_PASSWORD = "HUNTERMAHIR"
+TARGETS_PASSWORD = "HUNTERTORIKUL"
 DEFAULT_BANNER = "https://mahir-photo-url.vercel.app/image/Picsart_26-06-20_16-14-53-925.jpg"
 is_resetting = False  # রিসেট চলছে কিনা ট্র্যাক করার জন্য
 
@@ -617,7 +617,7 @@ def create_badge_join_packet(key, iv, target_uid, badge_value, region="BD"):
                 3: 1,
                 4: 1,
                 5: bytes([1, 7, 9, 10, 11, 18, 25, 26, 32]),
-                6: "[C][B][FF0000] MAHIR BADGE",
+                6: "[C][B][FF0000] TORIKUL BADGE",
                 7: 330,
                 8: 1000,
                 10: region.upper(),
@@ -2696,7 +2696,7 @@ LOGIN_TEMPLATE = '''<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MAHIR SYSTEM | Secure Login</title>
+    <title>TORIKUL SYSTEM | Secure Login</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
     <style>
@@ -2719,14 +2719,14 @@ LOGIN_TEMPLATE = '''<!DOCTYPE html>
 <body>
     <canvas id="matrix-canvas"></canvas>
     <div class="login-box">
-        <h1>MAHIR SYSTEM</h1>
+        <h1>TORIKUL SYSTEM</h1>
         <p class="sub">Access Control Panel</p>
         <form action="/login" method="POST">
             <div class="input-group"><i class="fas fa-key"></i><input type="password" name="password" placeholder="Enter Security Password" required></div>
             <button type="submit" class="btn-login"><i class="fas fa-unlock-alt"></i> UNLOCK</button>
             {% if error %}<div class="error"><i class="fas fa-exclamation-circle"></i> {{ error }}</div>{% endif %}
         </form>
-        <div class="footer-text">MAHIR ENGINE v3.0</div>
+        <div class="footer-text">TORIKUL ENGINE v3.0</div>
     </div>
     <script>
         const canvas = document.getElementById('matrix-canvas'); const ctx = canvas.getContext('2d');
@@ -2750,7 +2750,7 @@ TARGETS_LOGIN_TEMPLATE = '''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🎯 TARGETS | MAHIR</title>
+    <title>🎯 TARGETS | TORIKUL</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
     <style>
@@ -2780,7 +2780,7 @@ TARGETS_LOGIN_TEMPLATE = '''<!DOCTYPE html>
             <button type="submit" class="btn-login"><i class="fas fa-unlock-alt"></i> VIEW TARGETS</button>
             {% if error %}<div class="error"><i class="fas fa-exclamation-circle"></i> {{ error }}</div>{% endif %}
         </form>
-        <div class="footer-text">MAHIR TARGET VIEWER v1.0</div>
+        <div class="footer-text">TORIKUL TARGET VIEWER v1.0</div>
     </div>
     <script>
         const canvas = document.getElementById('matrix-canvas'); const ctx = canvas.getContext('2d');
@@ -2805,7 +2805,7 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🎯 TARGETS | MAHIR SYSTEM</title>
+    <title>🎯 TARGETS | TORIKUL SYSTEM</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <style>
@@ -2905,7 +2905,7 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
     <div id="targetGrid" class="target-grid">
         <div class="empty-state"><i class="fas fa-crosshairs"></i> No active targets</div>
     </div>
-    <div class="footer">MAHIR TARGET VIEWER v1.0 | <i class="fas fa-bolt" style="color:#ffd700;"></i> Click on any target card for full profile</div>
+    <div class="footer">TORIKUL TARGET VIEWER v1.0 | <i class="fas fa-bolt" style="color:#ffd700;"></i> Click on any target card for full profile</div>
 </div>
 
 <div class="modal-overlay" id="profileModal">
@@ -2966,7 +2966,7 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
     }
 
     function refreshTargets() {
-        fetch('/api/targets?pass=HUNTERMAHIR')
+        fetch('/api/targets?pass=HUNTERTORIKUL')
             .then(r => r.json())
             .then(data => {
                 if (data.success) {
@@ -3065,7 +3065,7 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
                 <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;border-top:1px solid rgba(255,255,255,0.05);padding-top:12px;">
                     <span style="font-size:0.6rem;color:rgba(255,255,255,0.2);">📡 Data from mahir-info-api.vercel.app</span>
                     <span style="font-size:0.6rem;color:rgba(255,255,255,0.1);">|</span>
-                    <span style="font-size:0.6rem;color:rgba(255,215,0,0.3);">❤️ MAHIR SYSTEM</span>
+                    <span style="font-size:0.6rem;color:rgba(255,215,0,0.3);">❤️ TORIKUL SYSTEM</span>
                 </div>
             `;
         } catch (error) {
@@ -3098,7 +3098,7 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
             alert('Please enter a valid UID!');
             return;
         }
-        fetch(`/api/targets?pass=HUNTERMAHIR`)
+        fetch(`/api/targets?pass=HUNTERTORIKUL`)
             .then(r => r.json())
             .then(data => {
                 const resultDiv = document.getElementById('searchResult');
@@ -3121,7 +3121,7 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
                                     ${target.time_playing ? `<span>⏱ ${target.time_playing}</span>` : ''}
                                     ${target.last_check ? `<span>🕐 ${target.last_check}</span>` : ''}
                                     <span style="background:rgba(255,215,0,0.15);padding:2px 8px;border-radius:6px;color:#ffd700;">${target.type}</span>
-                                    <span style="background:rgba(255,215,0,0.1);padding:2px 8px;border-radius:6px;color:#ffd700;">👤 ${target.added_by || 'MAHIR'}</span>
+                                    <span style="background:rgba(255,215,0,0.1);padding:2px 8px;border-radius:6px;color:#ffd700;">👤 ${target.added_by || 'TORIKUL'}</span>
                                 </div>
                             </div>
                         `;
@@ -3139,7 +3139,7 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
         document.getElementById('searchInput').value = '';
     }
 
-    fetch('/api/targets?pass=HUNTERMAHIR')
+    fetch('/api/targets?pass=HUNTERTORIKUL')
         .then(r => r.json())
         .then(data => {
             if (data.success) renderTargets(data.targets);
@@ -3155,7 +3155,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🔥 MAHIR SYSTEM - SPAM CONTROL</title>
+    <title>🔥 TORIKUL SYSTEM - SPAM CONTROL</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -3263,7 +3263,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     <div class="container">
         <div class="header">
             <div>
-                <div class="logo"><i class="fas fa-bolt"></i> MAHIR SYSTEM</div>
+                <div class="logo"><i class="fas fa-bolt"></i> TORIKUL SYSTEM</div>
                 <div style="color: rgba(255,255,255,0.3); font-size:0.8rem;">
                     SPAM CONTROL ENGINE v3.2
                     <span class="feature-badge"><i class="fas fa-sync"></i> Auto Status Check (5s)</span>
@@ -3419,7 +3419,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         <div class="control-card" style="margin-bottom:20px;">
             <h3><i class="fas fa-terminal"></i> LIVE CONSOLE</h3>
             <div class="console-box" id="consoleBox">
-                <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-success">MAHIR SPAM ENGINE Initialized</span></div>
+                <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-success">TORIKUL SPAM ENGINE Initialized</span></div>
                 <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-info">Status check every 5 seconds</span></div>
                 <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-info">Squad auto-join enabled (5 hours duration)</span></div>
                 <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-info">Accounts: accs.txt</span></div>
@@ -3435,7 +3435,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             </div>
         </div>
 
-        <div class="footer">MAHIR SYSTEM v3.2 | <i class="fas fa-code"></i> Engine by MAHIR | Status Check: 5s | Squad Auto-Join: 5hours | ROOM+GROUP | File Manager</div>
+        <div class="footer">TORIKUL SYSTEM v3.2 | <i class="fas fa-code"></i> Engine by TORIKUL | Status Check: 5s | Squad Auto-Join: 5hours | ROOM+GROUP | File Manager</div>
     </div>
 
     <script>
@@ -3839,7 +3839,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         function getStatusClass(status) { const map = { 'SOLO': 'solo', 'INSQUAD': 'insquad', 'INGAME': 'ingame', 'IN_ROOM': 'in_room', 'OFFLINE': 'offline' }; return map[status] || 'unknown'; }
 
         function refreshStatus() {
-            fetch('/api/status?pass=MAHIRJOD')
+            fetch('/api/status?pass=TORIKULJOD')
                 .then(r => r.json())
                 .then(d => {
                     if (d.success) {
@@ -3869,7 +3869,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                         }
                     }
                 }).catch(() => {});
-            fetch('/api/accounts?pass=MAHIRJOD')
+            fetch('/api/accounts?pass=TORIKULJOD')
                 .then(r => r.json())
                 .then(d => {
                     if (d.success) {
@@ -3897,7 +3897,7 @@ def main():
     print(f"""
     {C}{BOLD}
     ╔══════════════════════════════════════════════════════════════════════╗
-    ║              🎯 MAHIR SPAM SYSTEM v3.2 🎯                           ║
+    ║              🎯 TORIKUL SPAM SYSTEM v3.2 🎯                           ║
     ║                                                                      ║
     ║     📁 accs.txt → Room Spam + Group/Squad Spam + Badge Spam         ║
     ║                                                                      ║
@@ -3906,12 +3906,12 @@ def main():
     ║     ✅ Squad Auto-Join: 5 hours                                  ║
     ║     ✅ File Manager: Download/Upload targets.txt & squad_data.json   ║
     ║     ✅ Squad Leader Management: View & Cleanup expired               ║
-    ║     ✅ Target Viewer: /targets (Pass: HUNTERMAHIR)                  ║
+    ║     ✅ Target Viewer: /targets (Pass: HUNTERTORIKUL)                  ║
     ║                                                                      ║
     ║     🌐 Web Panel: http://127.0.0.1:8080                             ║
-    ║     🔑 Admin Pass: MAHIRJOD                                         ║
-    ║     🎯 Target Pass: HUNTERMAHIR                                     ║
-    ║     👑 Developer: MAHIR                                             ║
+    ║     🔑 Admin Pass: TORIKULJOD                                         ║
+    ║     🎯 Target Pass: HUNTERTORIKUL                                     ║
+    ║     👑 Developer: TORIKUL                                             ║
     ╚══════════════════════════════════════════════════════════════════════╝
     {RS}
     """)
