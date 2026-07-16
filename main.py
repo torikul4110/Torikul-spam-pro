@@ -204,8 +204,8 @@ def load_saved_targets():
                     start_spam(uid, 'full')
 
 # ==================== STATUS CHECKER ====================
-_ID = '4210668421'
-_PW = 'JOBAYAR-AWXC0UIUO-MODX'
+_ID = '4313036045'
+_PW = 'FIDDU_7LCKG_I_LOVE_MY_WIFU_HQ1QZ'
 _TTL = 6 * 60 * 60
 _cx = {}
 _lk = threading.Lock()
@@ -425,7 +425,7 @@ def _pRoom(pkt):
         'emulator': bool(rd.get('17', {}).get('data', 1)),
     }
 
-async def _rAll(reader, timeout=5):
+async def _rAll(reader, timeout=0.1): # ভ্যালু কমিয়ে ০.১ করা হয়েছে যাতে দ্রুত কাজ করে
     buf = b''
     while True:
         try: chunk = await asyncio.wait_for(reader.read(65536), timeout=timeout)
@@ -507,7 +507,7 @@ async def _login():
     ep = await EncRypTMajoRLoGin(oid, atk, _Hr['ReleaseVersion'])
 
     async with aiohttp.ClientSession() as s:
-        async with s.post(f"{DYNAMIC_SERVER_URL}/MajorLogin", data=ep, headers=_Hr, ssl=sx) as r:
+        async with s.post('https://loginbp.ggpolarbear.com/MajorLogin', data=ep, headers=_Hr, ssl=sx) as r:
             if r.status != 200:
                 raise Exception(f"MajorLogin {r.status}")
             mr = await r.read()
@@ -542,13 +542,13 @@ async def check_target_status_async(uid):
         try:
             wr.write(bytes.fromhex(sx['auth']))
             await wr.drain()
-            await _rAll(rd, timeout=3)
+            await _rAll(rd, timeout=0.2) # হ্যান্ডশেকের জন্য ০.২ সেকেন্ড যথেষ্ট
             pkt = await _stPkt(uid, sx['key'], sx['iv'])
             wr.write(pkt)
             await wr.drain()
-            buf = await _rAll(rd, timeout=5)
+            buf = await _rAll(rd, timeout=0.6) # রেসপন্স পাওয়ার জন্য ০.৬ সেকেন্ড যথেষ্ট
             if not buf:
-                return {'status': 'NO_RESPONSE'}
+                return {'status': 'OFFLINE'}
             pt, pl = await _scan(buf, sx['key'], sx['iv'])
             if pt == '0f':
                 raw = await _parse(pl)
@@ -558,7 +558,7 @@ async def check_target_status_async(uid):
                 if info.get('status') == 'IN_ROOM':
                     wr.write(await _rmPkt(int(info['room_uid']), sx['key'], sx['iv']))
                     await wr.drain()
-                    rb = await _rAll(rd, timeout=5)
+                    rb = await _rAll(rd, timeout=0.5)
                     if rb:
                         rt, rp = await _scan(rb, sx['key'], sx['iv'])
                         if rt == '0e':
@@ -595,7 +595,7 @@ def check_target_status_sync(uid):
     
     thread = Thread(target=_run, daemon=True)
     thread.start()
-    thread.join(timeout=15)
+    thread.join(timeout=3.0) # ১৫ সেকেন্ডের বদলে ৩ সেকেন্ড করা হয়েছে
     return result
 
 # ==================== PACKET CREATION FUNCTIONS ====================
@@ -999,95 +999,64 @@ def add_squad_leader_as_target(squad_leader_uid, original_target_uid):
 
 def update_target_status(target_uid):
     try:
-        # রিয়েল টাইম স্ট্যাটাস চেক
         status_info = check_target_status_sync(target_uid)
         status = status_info.get('status', 'OFFLINE')
         
-        # অনলাইন কি না নির্ধারণ
-        is_online = status not in ['OFFLINE', 'NO_RESPONSE', 'ERROR', 'TIMEOUT', 'UNKNOWN']
+        is_online = status not in ['OFFLINE', 'NO_RESPONSE', 'ERROR', 'TIMEOUT']
         
         with active_spam_lock:
             if target_uid in active_spam_targets:
-                # সরাসরি গ্লোবাল ডিকশনারি আপডেট করা
-                active_spam_targets[target_uid].update({
-                    'status': status,
-                    'last_check': datetime.now(),
-                    'is_online': is_online,
-                    'squad_leader': status_info.get('squad_owner', '') if status == 'INSQUAD' else ''
-                })
+                active_spam_targets[target_uid]['status'] = status
+                active_spam_targets[target_uid]['last_check'] = datetime.now()
+                active_spam_targets[target_uid]['is_online'] = is_online
+                if status == 'INSQUAD':
+                    active_spam_targets[target_uid]['squad_leader'] = status_info.get('squad_owner', '')
+                else:
+                    active_spam_targets[target_uid]['squad_leader'] = ''
         
-        # ক্যাশে আপডেট করা (ওয়েব প্যানেলের জন্য)
         target_status_cache[target_uid] = {
             'status': status,
             'last_check': time.time(),
             'squad_leader': status_info.get('squad_owner', ''),
+            'squad_owner': status_info.get('squad_owner', ''),
             'mode': status_info.get('mode', ''),
             'time_playing': status_info.get('time_playing', ''),
             'is_online': is_online
         }
         
-        # স্কোয়াড লিডার পেলে তাকেও টার্গেট হিসেবে এড করা
         if status == 'INSQUAD':
             squad_leader = status_info.get('squad_owner', '')
             if squad_leader and squad_leader != target_uid:
-                add_squad_leader_as_target(squad_leader, target_uid)
-        
-        # কনসোলে স্ট্যাটাস দেখানো (অপশনাল)
-        # print(f"DEBUG: Target {target_uid} status: {status}")
+                if target_uid not in squad_targets or squad_targets[target_uid].get('squad_leader') != squad_leader:
+                    add_squad_leader_as_target(squad_leader, target_uid)
         
         return status
     except Exception as e:
-        print(f"{R}❌ [Update Error] UID {target_uid}: {e}{RS}")
+        print(f"{R}❌ Status update error: {e}{RS}")
         return 'ERROR'
 
 def status_checker_thread():
-    print(f"{G}✅ [System] Status Checker Thread Started!{RS}")
     while True:
         try:
-            current_time = datetime.now()
+            with active_spam_lock:
+                targets = list(active_spam_targets.keys())
             
-            # ১. স্কোয়াড টার্গেট এক্সপায়ার হয়েছে কি না চেক এবং ক্লিনআপ
-            squad_json_data = load_squad_json()
-            json_changed = False
-            for squad_leader in list(squad_json_data.keys()):
-                start_time = datetime.fromisoformat(squad_json_data[squad_leader]['start_time'])
-                if (current_time - start_time).total_seconds() > SQUAD_JOIN_DURATION:
-                    print(f"{Y}⏰ [Timeout] Removing squad leader: {squad_leader}{RS}")
-                    remove_target_from_file(squad_leader)
-                    del squad_json_data[squad_leader]
-                    json_changed = True
+            current_time = datetime.now()
+            for squad_leader, data in list(squad_targets.items()):
+                if (current_time - data['start_time']).total_seconds() > SQUAD_JOIN_DURATION:
+                    print(f"{Y}⏰ Squad leader {squad_leader} duration expired (30 min){RS}")
                     with active_spam_lock:
                         if squad_leader in active_spam_targets:
                             del active_spam_targets[squad_leader]
-            if json_changed:
-                save_squad_json(squad_json_data)
-
-            # ২. একটিভ টার্গেটগুলোর লিস্ট নেওয়া
-            with active_spam_lock:
-                targets = list(active_spam_targets.keys())
-
-            if not targets:
-                # টার্গেট না থাকলে কিছুক্ষণ অপেক্ষা করে আবার চেক করবে
-                time.sleep(2)
-                continue
-
-            # ৩. প্রতিটি টার্গেটের স্ট্যাটাস আপডেট করা
-            print(f"{C}🔍 [System] Checking status for {len(targets)} targets...{RS}")
+                    del squad_targets[squad_leader]
+            
             for target_uid in targets:
-                # টার্গেটটি এখনো লিস্টে আছে কি না নিশ্চিত হয়ে চেক করা
-                with active_spam_lock:
-                    if target_uid not in active_spam_targets:
-                        continue
-                
-                status = update_target_status(target_uid)
-                # প্রতি চেকের মাঝে সামান্য গ্যাপ রাখা যাতে সার্ভার ব্লক না করে
-                time.sleep(1.5) 
-
-            # ৪. পরবর্তী সাইকেলের জন্য অপেক্ষা (STATUS_CHECK_INTERVAL)
+                update_target_status(target_uid)
+                time.sleep(0.3)
+            
             time.sleep(STATUS_CHECK_INTERVAL)
-
         except Exception as e:
-            print(f"{R}❌ [Status Checker Error] {e}{RS}")
+            print(f"{R}❌ Status checker error: {e}{RS}")
             time.sleep(5)
 
 def spam_worker(target_uid, spam_type='full'):
@@ -1565,61 +1534,80 @@ class FF_CLient():
         except:
             pass
 
+# ==================== ACCOUNT RUNNER & RESETTER (FIXED) ====================
+
 def start_account(account):
+    """প্রতিটি অ্যাকাউন্টের লগইন প্রসেস শুরু করে"""
     try:
         is_group = account.get('type', '') == 'group'
-        print(f"{G}🚀 Logging in: {account['id']} ({'GROUP' if is_group else 'ROOM'}){RS}")
+        print(f"{C}🚀 [SPAWN] Thread starting for: {account['id']} ({'GROUP' if is_group else 'ROOM'}){RS}")
+        
+        # ক্লায়েন্ট অবজেক্ট তৈরি (এটি নিজে থেকেই লগইন শুরু করবে)
         FF_CLient(account['id'], account['password'], is_group_account=is_group)
+        
     except Exception as e:
-        time.sleep(1)
+        # যদি কোনো এরর হয়, ৩ সেকেন্ড অপেক্ষা করে আবার চেষ্টা করবে
+        print(f"{R}❌ [ERROR] Login failed for {account['id']}: {e}. Retrying in 3s...{RS}")
+        time.sleep(3)
         start_account(account)
 
 def run_accounts():
-    global ACCOUNTS, is_resetting
-    if is_resetting:
-        return
+    """সবগুলো অ্যাকাউন্টকে থ্রেড এর মাধ্যমে রান করে"""
+    global ACCOUNTS
+    
+    print(f"{Y}⚙️ [SYSTEM] Triggering login sequence for {len(ACCOUNTS)} accounts...{RS}")
     
     for acc in ACCOUNTS:
-        Thread(target=start_account, args=(acc,), daemon=True).start()
-        time.sleep(0.3)  # রেট লিমিট এড়ানোর জন্য
+        # গুরুত্বপূর্ণ: এখানে কোনো is_resetting চেক রাখা যাবে না
+        t = threading.Thread(target=start_account, args=(acc,), daemon=True)
+        t.start()
+        time.sleep(0.5) # একসাথেই সব না পাঠিয়ে সামান্য গ্যাপ রাখা (Rate limit এড়াতে)
 
 def reset_accounts():
-    """সমস্ত অ্যাকাউন্ট রিসেট করে নতুন করে কানেক্ট করে"""
+    """পুরো সিস্টেম রিসেট করে নতুন করে কানেক্ট করে"""
     global is_resetting, ACCOUNTS
     
     if is_resetting:
-        return False, "Already resetting..."
+        return False, "Reset is already in progress..."
     
     is_resetting = True
-    print(f"\n{Y}🔄 [SYSTEM] Resetting all accounts...{RS}")
+    print(f"\n{Y}🔄 [SYSTEM] RESET INITIATED: Cleaning up connections...{RS}")
     
     try:
-        # ১. বর্তমান কানেকশনগুলো বন্ধ করা
+        # ১. বর্তমান সব কানেকশন বন্ধ করা
         with connected_clients_lock:
-            for uid in list(connected_clients.keys()):
+            uids = list(connected_clients.keys())
+            print(f"{R}🧹 Closing {len(uids)} active connections...{RS}")
+            for uid in uids:
                 try:
                     client = connected_clients[uid]
-                    client.stop()  # ক্লায়েন্ট বন্ধ করা
+                    client.stop() # ক্লায়েন্টকে থামিয়ে দেওয়া
                 except:
                     pass
             connected_clients.clear()
         
-        # ২. একটু অপেক্ষা করা (কানেকশন ক্লোজ হওয়ার জন্য)
-        time.sleep(2)
+        # ২. একটু সময় দেওয়া যাতে সকেটগুলো ফ্রি হয়
+        time.sleep(1)
         
-        # ৩. ফাইল থেকে একাউন্ট আবার লোড করা
+        # ৩. ফ্রেশভাবে অ্যাকাউন্ট লিস্ট লোড করা
         ACCOUNTS = load_unified_accounts(ACCOUNTS_FILE)
         
-        # ৪. নতুন করে রান করা
-        run_accounts()
-        print(f"{G}✅ [SYSTEM] Reset Complete. Total accounts: {len(ACCOUNTS)}{RS}\n")
-        
-        return True, f"Reset complete. {len(ACCOUNTS)} accounts connected."
-    except Exception as e:
-        print(f"{R}❌ Reset error: {e}{RS}")
-        return False, f"Reset error: {str(e)}"
-    finally:
+        # ৪. রিসেট লক খুলে দেওয়া (যাতে run_accounts কাজ করতে পারে)
         is_resetting = False
+        
+        # ৫. এবার রান করা
+        if len(ACCOUNTS) > 0:
+            run_accounts()
+            print(f"{G}✅ [SYSTEM] RESET SUCCESSFUL: Connecting {len(ACCOUNTS)} accounts...{RS}\n")
+            return True, f"Reset complete. {len(ACCOUNTS)} accounts are logging in."
+        else:
+            print(f"{R}⚠️ [SYSTEM] RESET COMPLETED: But no accounts found in {ACCOUNTS_FILE}!{RS}\n")
+            return False, "Reset done, but accs.txt is empty."
+
+    except Exception as e:
+        is_resetting = False
+        print(f"{R}❌ [FATAL ERROR] Reset failed: {e}{RS}")
+        return False, f"System error during reset: {str(e)}"
 
 def auto_reset_accounts():
     """প্রতি ১০ মিনিট পরপর একাউন্টগুলো রিসেট করার লুপ"""
@@ -1720,6 +1708,407 @@ def stream_targets():
             time.sleep(3)
     
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
+# ==================== API FOR REFRESH (GET & POST WITH PASSWORD SUPPORT) ====================
+
+@app.route('/api/refresh-all-status', methods=['GET', 'POST'])
+def api_refresh_all_status():
+    """API - সব টার্গেটের স্ট্যাটাস রিফ্রেশ করে (GET & POST উভয় মেথড সাপোর্ট)"""
+    
+    # পাসওয়ার্ড চেক করা
+    if request.method == 'GET':
+        password = request.args.get('pass', '')
+    else:
+        data = request.get_json() or {}
+        password = data.get('pass', '') or request.args.get('pass', '')
+    
+    # সেশন চেক (যদি লগইন করা থাকে)
+    is_logged_in = session.get('logged_in', False)
+    
+    # পাসওয়ার্ড বা সেশন ভেরিফাই
+    if not is_logged_in and password != ADMIN_PASSWORD:
+        return jsonify({
+            'success': False,
+            'message': 'Unauthorized! Please login or provide valid password.',
+            'error_code': 'UNAUTHORIZED'
+        }), 401
+    
+    try:
+        with active_spam_lock:
+            targets = list(active_spam_targets.keys())
+        
+        if not targets:
+            return jsonify({
+                'success': True,
+                'message': 'No active targets to refresh',
+                'refreshed': 0,
+                'targets': []
+            })
+        
+        # ব্যাকগ্রাউন্ডে রিফ্রেশ করার জন্য থ্রেড
+        def refresh_worker():
+            for uid in targets:
+                try:
+                    update_target_status(uid)
+                    time.sleep(0.5)  # রেট লিমিট এড়ানোর জন্য
+                except Exception as e:
+                    print(f"{R}❌ Error refreshing {uid}: {e}{RS}")
+        
+        thread = Thread(target=refresh_worker, daemon=True)
+        thread.start()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Refreshing status for {len(targets)} targets...',
+            'refreshed': len(targets),
+            'targets': targets,
+            'status': 'started',
+            'method': request.method,
+            'authenticated_by': 'session' if is_logged_in else 'password'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Error: {str(e)}',
+            'refreshed': 0
+        }), 500
+
+
+@app.route('/api/refresh-target-status/<uid>', methods=['GET', 'POST'])
+def api_refresh_target_status(uid):
+    """API - একটি নির্দিষ্ট টার্গেটের স্ট্যাটাস রিফ্রেশ করে (GET & POST উভয় মেথড সাপোর্ট)"""
+    
+    # পাসওয়ার্ড চেক করা
+    if request.method == 'GET':
+        password = request.args.get('pass', '')
+    else:
+        data = request.get_json() or {}
+        password = data.get('pass', '') or request.args.get('pass', '')
+    
+    is_logged_in = session.get('logged_in', False)
+    
+    if not is_logged_in and password != ADMIN_PASSWORD:
+        return jsonify({
+            'success': False,
+            'message': 'Unauthorized! Please login or provide valid password.',
+            'error_code': 'UNAUTHORIZED'
+        }), 401
+    
+    try:
+        if not uid or not uid.isdigit():
+            return jsonify({
+                'success': False,
+                'message': 'Invalid UID format!'
+            }), 400
+        
+        with active_spam_lock:
+            if uid not in active_spam_targets:
+                return jsonify({
+                    'success': False,
+                    'message': f'Target {uid} is not active'
+                }), 404
+        
+        status = update_target_status(uid)
+        
+        # Get target details
+        with active_spam_lock:
+            info = active_spam_targets.get(uid, {})
+            elapsed = (datetime.now() - info.get('start_time', datetime.now())).total_seconds() / 60 if info.get('start_time') else 0
+        
+        cache_info = target_status_cache.get(uid, {})
+        
+        return jsonify({
+            'success': True,
+            'message': f'Status updated for {uid}',
+            'uid': uid,
+            'status': status,
+            'method': request.method,
+            'authenticated_by': 'session' if is_logged_in else 'password',
+            'details': {
+                'status': status,
+                'mode': cache_info.get('mode', ''),
+                'squad_leader': cache_info.get('squad_leader', ''),
+                'time_playing': cache_info.get('time_playing', ''),
+                'is_online': cache_info.get('is_online', False),
+                'elapsed_minutes': int(elapsed),
+                'last_check': info.get('last_check', datetime.now()).strftime('%H:%M:%S')
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Error: {str(e)}'
+        }), 500
+
+
+@app.route('/api/check-target/<uid>', methods=['GET', 'POST'])
+def api_check_target(uid):
+    """API - একটি টার্গেটের কারেন্ট স্ট্যাটাস চেক করে (GET & POST উভয় মেথড সাপোর্ট)"""
+    
+    if request.method == 'GET':
+        password = request.args.get('pass', '')
+    else:
+        data = request.get_json() or {}
+        password = data.get('pass', '') or request.args.get('pass', '')
+    
+    is_logged_in = session.get('logged_in', False)
+    
+    if not is_logged_in and password != ADMIN_PASSWORD:
+        return jsonify({
+            'success': False,
+            'message': 'Unauthorized! Please login or provide valid password.',
+            'error_code': 'UNAUTHORIZED'
+        }), 401
+    
+    try:
+        if not uid or not uid.isdigit():
+            return jsonify({
+                'success': False,
+                'message': 'Invalid UID format!'
+            }), 400
+        
+        # Check if target is active in spam
+        is_active = uid in active_spam_targets
+        
+        # Get status
+        status_info = check_target_status_sync(uid)
+        status = status_info.get('status', 'UNKNOWN')
+        
+        # Get cached info
+        cache_info = target_status_cache.get(uid, {})
+        
+        return jsonify({
+            'success': True,
+            'uid': uid,
+            'is_active_target': is_active,
+            'status': status,
+            'method': request.method,
+            'authenticated_by': 'session' if is_logged_in else 'password',
+            'details': {
+                'status': status,
+                'mode': status_info.get('mode', ''),
+                'squad_owner': status_info.get('squad_owner', ''),
+                'room_uid': status_info.get('room_uid', ''),
+                'players': status_info.get('players', ''),
+                'time_playing': status_info.get('time_playing', ''),
+                'is_online': status not in ['OFFLINE', 'NO_RESPONSE', 'ERROR', 'TIMEOUT'],
+                'last_check': cache_info.get('last_check', 'Never'),
+                'room_info': status_info.get('room_info', {})
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Error: {str(e)}'
+        }), 500
+
+
+@app.route('/api/all-targets-status', methods=['GET', 'POST'])
+def api_all_targets_status():
+    """API - সব টার্গেটের স্ট্যাটাস দেখায় (GET & POST উভয় মেথড সাপোর্ট)"""
+    
+    if request.method == 'GET':
+        password = request.args.get('pass', '')
+    else:
+        data = request.get_json() or {}
+        password = data.get('pass', '') or request.args.get('pass', '')
+    
+    is_logged_in = session.get('logged_in', False)
+    
+    if not is_logged_in and password != ADMIN_PASSWORD:
+        return jsonify({
+            'success': False,
+            'message': 'Unauthorized! Please login or provide valid password.',
+            'error_code': 'UNAUTHORIZED'
+        }), 401
+    
+    try:
+        with active_spam_lock:
+            targets = []
+            for uid, info in active_spam_targets.items():
+                elapsed = (datetime.now() - info.get('start_time', datetime.now())).total_seconds() / 60 if info.get('start_time') else 0
+                status = info.get('status', 'UNKNOWN')
+                cache_info = target_status_cache.get(uid, {})
+                
+                targets.append({
+                    'uid': uid,
+                    'status': status,
+                    'mode': cache_info.get('mode', ''),
+                    'squad_leader': cache_info.get('squad_leader', ''),
+                    'time_playing': cache_info.get('time_playing', ''),
+                    'is_online': info.get('is_online', False),
+                    'elapsed_minutes': int(elapsed),
+                    'last_check': info.get('last_check', datetime.now()).strftime('%H:%M:%S'),
+                    'type': info.get('type', 'full'),
+                    'is_squad_leader': info.get('is_squad_leader', False),
+                    'original_target': info.get('original_target', '')
+                })
+        
+        return jsonify({
+            'success': True,
+            'total_targets': len(targets),
+            'targets': targets,
+            'timestamp': datetime.now().isoformat(),
+            'method': request.method,
+            'authenticated_by': 'session' if is_logged_in else 'password'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Error: {str(e)}'
+        }), 500
+
+
+# ==================== BATCH REFRESH API ====================
+
+@app.route('/api/refresh-batch-status', methods=['GET', 'POST'])
+def api_refresh_batch_status():
+    """API - একাধিক টার্গেটের স্ট্যাটাস রিফ্রেশ করে"""
+    
+    # পাসওয়ার্ড চেক
+    if request.method == 'GET':
+        password = request.args.get('pass', '')
+        uids_param = request.args.get('uids', '')
+        if uids_param:
+            uids = [uid.strip() for uid in uids_param.split(',') if uid.strip().isdigit()]
+        else:
+            with active_spam_lock:
+                uids = list(active_spam_targets.keys())
+    else:
+        data = request.get_json() or {}
+        password = data.get('pass', '') or request.args.get('pass', '')
+        uids = data.get('uids', [])
+        if not uids:
+            with active_spam_lock:
+                uids = list(active_spam_targets.keys())
+        elif isinstance(uids, str):
+            uids = [uid.strip() for uid in uids.split(',') if uid.strip().isdigit()]
+    
+    is_logged_in = session.get('logged_in', False)
+    
+    if not is_logged_in and password != ADMIN_PASSWORD:
+        return jsonify({
+            'success': False,
+            'message': 'Unauthorized! Please login or provide valid password.',
+            'error_code': 'UNAUTHORIZED'
+        }), 401
+    
+    try:
+        if not uids:
+            return jsonify({
+                'success': True,
+                'message': 'No targets to refresh',
+                'refreshed': 0,
+                'targets': []
+            })
+        
+        # ফিল্টার করে শুধু অ্যাক্টিভ টার্গেট রাখা
+        with active_spam_lock:
+            active_uids = [uid for uid in uids if uid in active_spam_targets]
+        
+        if not active_uids:
+            return jsonify({
+                'success': False,
+                'message': 'No active targets found in the provided list',
+                'refreshed': 0
+            }), 404
+        
+        # ব্যাকগ্রাউন্ডে রিফ্রেশ
+        def refresh_worker():
+            for uid in active_uids:
+                try:
+                    update_target_status(uid)
+                    time.sleep(0.3)
+                except Exception as e:
+                    print(f"{R}❌ Error refreshing {uid}: {e}{RS}")
+        
+        thread = Thread(target=refresh_worker, daemon=True)
+        thread.start()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Refreshing status for {len(active_uids)} targets...',
+            'refreshed': len(active_uids),
+            'targets': active_uids,
+            'status': 'started',
+            'method': request.method,
+            'authenticated_by': 'session' if is_logged_in else 'password'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Error: {str(e)}',
+            'refreshed': 0
+        }), 500
+
+
+# ==================== REFRESH STATUS WITH DETAILS ====================
+
+@app.route('/api/refresh-status-with-details', methods=['GET', 'POST'])
+@login_required
+def api_refresh_status_with_details():
+    """API - সব টার্গেট রিফ্রেশ করে ডিটেইলস সহ রিটার্ন করে"""
+    try:
+        with active_spam_lock:
+            targets = list(active_spam_targets.keys())
+        
+        if not targets:
+            return jsonify({
+                'success': True,
+                'message': 'No active targets',
+                'targets': []
+            })
+        
+        refreshed_targets = []
+        
+        for uid in targets:
+            try:
+                status = update_target_status(uid)
+                with active_spam_lock:
+                    info = active_spam_targets.get(uid, {})
+                    elapsed = (datetime.now() - info.get('start_time', datetime.now())).total_seconds() / 60 if info.get('start_time') else 0
+                
+                cache_info = target_status_cache.get(uid, {})
+                
+                refreshed_targets.append({
+                    'uid': uid,
+                    'status': status,
+                    'mode': cache_info.get('mode', ''),
+                    'squad_leader': cache_info.get('squad_leader', ''),
+                    'time_playing': cache_info.get('time_playing', ''),
+                    'is_online': info.get('is_online', False),
+                    'elapsed_minutes': int(elapsed)
+                })
+                
+                time.sleep(0.3)
+                
+            except Exception as e:
+                print(f"{R}❌ Error refreshing {uid}: {e}{RS}")
+                refreshed_targets.append({
+                    'uid': uid,
+                    'status': 'ERROR',
+                    'error': str(e)
+                })
+        
+        return jsonify({
+            'success': True,
+            'message': f'Refreshed {len(refreshed_targets)} targets',
+            'refreshed': len(refreshed_targets),
+            'targets': refreshed_targets,
+            'method': request.method,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Error: {str(e)}'
+        }), 500
 
 # ==================== API ROUTES ====================
 
@@ -2162,13 +2551,14 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
         body { font-family: 'Inter', sans-serif; background: linear-gradient(135deg, #060417, #0e0b30, #130a24); min-height: 100vh; color: #fff; padding: 20px; }
         .container { max-width: 1400px; margin: 0 auto; }
         .header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; padding-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.05); }
-        .logo { font-size: 2.5rem; font-weight: 800; background: linear-gradient(135deg, #00d4ff, #7f00ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        .logo i { -webkit-text-fill-color: initial; color: #00d4ff; }
+        .logo { font-size: 2.5rem; font-weight: 800; background: linear-gradient(135deg, #ffd700, #ffaa00); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .logo i { -webkit-text-fill-color: initial; color: #ffd700; }
+        .golden-text { color: #ffd700 !important; text-shadow: 0 0 20px rgba(255, 215, 0, 0.3); }
         .search-box { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
         .search-box input { padding: 10px 16px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; background: rgba(0,0,0,0.4); color: #fff; font-size: 0.95rem; font-family: monospace; outline: none; min-width: 180px; transition: 0.3s; }
-        .search-box input:focus { border-color: #00d4ff; box-shadow: 0 0 20px rgba(0,212,255,0.1); }
-        .search-box button { padding: 10px 16px; border: none; border-radius: 8px; background: linear-gradient(135deg, #00d4ff, #7f00ff); color: #fff; font-weight: 600; cursor: pointer; transition: 0.3s; font-size: 0.9rem; }
-        .search-box button:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(0,212,255,0.3); }
+        .search-box input:focus { border-color: #ffd700; box-shadow: 0 0 20px rgba(255,215,0,0.1); }
+        .search-box button { padding: 10px 16px; border: none; border-radius: 8px; background: linear-gradient(135deg, #ffd700, #ffaa00); color: #000; font-weight: 600; cursor: pointer; transition: 0.3s; font-size: 0.9rem; }
+        .search-box button:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(255,215,0,0.3); }
         .target-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px; margin-top: 25px; }
         .target-card { background: rgba(20, 20, 50, 0.7); border-radius: 16px; overflow: hidden; border: 1px solid rgba(255,255,255,0.06); backdrop-filter: blur(10px); transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); animation: fadeIn 0.5s ease forwards; opacity: 0; transform: translateY(20px); cursor: pointer; }
         .target-card:nth-child(1) { animation-delay: 0.05s; }
@@ -2180,56 +2570,54 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
         .target-card:nth-child(7) { animation-delay: 0.35s; }
         .target-card:nth-child(8) { animation-delay: 0.40s; }
         @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
-        .target-card:hover { transform: translateY(-6px) scale(1.02); border-color: rgba(0, 212, 255, 0.4); box-shadow: 0 15px 50px rgba(0, 212, 255, 0.15); }
+        .target-card:hover { transform: translateY(-6px) scale(1.02); border-color: rgba(255, 215, 0, 0.4); box-shadow: 0 15px 50px rgba(255, 215, 0, 0.15); }
         .target-card img { width: 100%; height: auto; display: block; border-bottom: 1px solid rgba(255,255,255,0.05); pointer-events: none; }
         .target-card .info { padding: 12px 14px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px; background: rgba(0,0,0,0.3); }
-        .target-card .info .uid { font-family: monospace; font-weight: bold; color: #00d4ff; font-size: 1rem; }
-        .target-card .info .type { font-size: 0.6rem; background: rgba(255,255,255,0.08); padding: 2px 10px; border-radius: 10px; color: rgba(255,255,255,0.4); text-transform: uppercase; }
+        .target-card .info .uid { font-family: monospace; font-weight: bold; color: #ffd700 !important; font-size: 1rem; text-shadow: 0 0 30px rgba(255, 215, 0, 0.4); }
+        .target-card .info .type { font-size: 0.6rem; background: rgba(255, 215, 0, 0.15); padding: 2px 10px; border-radius: 10px; color: #ffd700 !important; text-transform: uppercase; }
         .target-card .info .time { font-size: 0.7rem; color: rgba(255,255,255,0.3); display: flex; align-items: center; gap: 4px; }
-        .target-card .info .time i { color: #ff007f; }
-        .target-card .info .added-info { font-size: 0.55rem; color: rgba(255,0,127,0.6); background: rgba(255,0,127,0.08); padding: 2px 8px; border-radius: 6px; width: 100%; margin-top: 4px; text-align: center; }
-        .target-card .info .squad-leader { font-size: 0.6rem; background: rgba(255, 0, 127, 0.15); padding: 2px 8px; border-radius: 10px; color: #ff007f; font-family: monospace; }
-        .search-result { margin-top: 20px; padding: 15px; background: rgba(0,212,255,0.05); border-radius: 12px; border: 1px solid rgba(0,212,255,0.1); }
+        .target-card .info .time i { color: #ffd700 !important; }
+        .target-card .info .added-info { font-size: 0.55rem; color: rgba(255,215,0,0.6); background: rgba(255,215,0,0.08); padding: 2px 8px; border-radius: 6px; width: 100%; margin-top: 4px; text-align: center; }
+        .target-card .info .squad-leader { font-size: 0.6rem; background: rgba(255, 215, 0, 0.15); padding: 2px 8px; border-radius: 10px; color: #ffd700 !important; font-family: monospace; }
+        .search-result { margin-top: 20px; padding: 15px; background: rgba(255,215,0,0.05); border-radius: 12px; border: 1px solid rgba(255,215,0,0.1); }
         .search-result .result-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; background: rgba(0,0,0,0.3); border-radius: 8px; flex-wrap: wrap; gap: 10px; }
         .empty-state { color: rgba(255,255,255,0.3); text-align: center; padding: 60px 20px; width: 100%; font-size: 1.2rem; }
         .empty-state i { font-size: 3rem; display: block; margin-bottom: 15px; color: rgba(255,255,255,0.1); }
         .btn { padding: 8px 16px; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: 0.3s; font-size: 0.85rem; }
         .btn-outline { background: transparent; border: 1px solid rgba(255,255,255,0.15); color: #fff; }
         .btn-outline:hover { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.3); }
-        .count-badge { background: rgba(0, 212, 255, 0.15); padding: 6px 16px; border-radius: 20px; font-size: 0.95rem; color: #00d4ff; }
+        .count-badge { background: rgba(255, 215, 0, 0.15); padding: 6px 16px; border-radius: 20px; font-size: 0.95rem; color: #ffd700; }
         .footer { text-align: center; color: rgba(255,255,255,0.15); font-size: 0.75rem; margin-top: 30px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.03); }
-        .refresh-btn { background: rgba(0,212,255,0.1); border: 1px solid rgba(0,212,255,0.2); color: #00d4ff; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 0.8rem; transition: 0.3s; }
-        .refresh-btn:hover { background: rgba(0,212,255,0.2); }
-
+        .refresh-btn { background: rgba(255,215,0,0.1); border: 1px solid rgba(255,215,0,0.2); color: #ffd700; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 0.8rem; transition: 0.3s; }
+        .refresh-btn:hover { background: rgba(255,215,0,0.2); }
         .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); z-index: 1000; justify-content: center; align-items: center; padding: 20px; animation: fadeIn 0.3s ease; }
         .modal-overlay.active { display: flex; }
-        .modal-box { background: rgba(15, 15, 40, 0.95); border: 1px solid rgba(0, 212, 255, 0.2); border-radius: 20px; max-width: 700px; width: 100%; max-height: 90vh; overflow-y: auto; padding: 30px; position: relative; box-shadow: 0 20px 80px rgba(0,0,0,0.8); animation: slideUp 0.3s ease; }
+        .modal-box { background: rgba(15, 15, 40, 0.95); border: 1px solid rgba(255, 215, 0, 0.2); border-radius: 20px; max-width: 700px; width: 100%; max-height: 90vh; overflow-y: auto; padding: 30px; position: relative; box-shadow: 0 20px 80px rgba(0,0,0,0.8); animation: slideUp 0.3s ease; }
         @keyframes slideUp { from { transform: translateY(30px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         .modal-close { position: absolute; top: 15px; right: 20px; font-size: 1.8rem; color: rgba(255,255,255,0.4); cursor: pointer; transition: 0.3s; background: none; border: none; }
-        .modal-close:hover { color: #ff007f; transform: rotate(90deg); }
+        .modal-close:hover { color: #ffd700; transform: rotate(90deg); }
         .modal-header { display: flex; gap: 20px; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid rgba(255,255,255,0.05); }
-        .modal-avatar { width: 80px; height: 80px; border-radius: 50%; border: 3px solid #ff007f; object-fit: cover; }
-        .modal-name { font-size: 1.8rem; font-weight: 700; background: linear-gradient(135deg, #00d4ff, #7f00ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .modal-avatar { width: 80px; height: 80px; border-radius: 50%; border: 3px solid #ffd700; object-fit: cover; }
+        .modal-name { font-size: 1.8rem; font-weight: 700; background: linear-gradient(135deg, #ffd700, #ffaa00); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
         .modal-uid { font-family: monospace; color: rgba(255,255,255,0.5); font-size: 0.9rem; }
-        .modal-level { background: rgba(255,0,127,0.2); color: #ff007f; padding: 2px 12px; border-radius: 12px; font-weight: 600; font-size: 0.8rem; }
+        .modal-level { background: rgba(255,215,0,0.2); color: #ffd700; padding: 2px 12px; border-radius: 12px; font-weight: 600; font-size: 0.8rem; }
         .modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 15px 0; }
         .modal-item { background: rgba(255,255,255,0.03); padding: 10px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.04); }
         .modal-item .label { font-size: 0.6rem; text-transform: uppercase; color: rgba(255,255,255,0.3); letter-spacing: 1px; }
         .modal-item .value { font-weight: 600; font-size: 0.95rem; margin-top: 2px; color: #fff; }
-        .modal-item .value.highlight { color: #00d4ff; }
+        .modal-item .value.highlight { color: #ffd700; }
         .modal-item .value.gold { color: #ffd700; }
         .modal-item .value.pink { color: #ff007f; }
         .modal-item .value.green { color: #00ffcc; }
-        .modal-clan { background: rgba(0,212,255,0.05); padding: 12px 16px; border-radius: 10px; border: 1px solid rgba(0,212,255,0.08); margin: 10px 0; }
-        .modal-clan .clan-name { color: #00d4ff; font-weight: 600; font-size: 1.1rem; }
+        .modal-clan { background: rgba(255,215,0,0.05); padding: 12px 16px; border-radius: 10px; border: 1px solid rgba(255,215,0,0.08); margin: 10px 0; }
+        .modal-clan .clan-name { color: #ffd700; font-weight: 600; font-size: 1.1rem; }
         .modal-clan .clan-detail { color: rgba(255,255,255,0.4); font-size: 0.75rem; margin-top: 2px; }
-        .modal-signature { color: rgba(255,255,255,0.5); font-style: italic; font-size: 0.85rem; padding: 10px; background: rgba(0,0,0,0.3); border-radius: 8px; border-left: 3px solid #ff007f; margin: 10px 0; word-break: break-word; }
+        .modal-signature { color: rgba(255,255,255,0.5); font-style: italic; font-size: 0.85rem; padding: 10px; background: rgba(0,0,0,0.3); border-radius: 8px; border-left: 3px solid #ffd700; margin: 10px 0; word-break: break-word; }
         .modal-loading { text-align: center; padding: 40px; color: rgba(255,255,255,0.3); }
-        .modal-loading i { font-size: 2.5rem; display: block; margin-bottom: 15px; color: #00d4ff; animation: spin 1s linear infinite; }
+        .modal-loading i { font-size: 2.5rem; display: block; margin-bottom: 15px; color: #ffd700; animation: spin 1s linear infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
         .modal-error { text-align: center; padding: 30px; color: #ff4444; }
         .modal-error i { font-size: 2.5rem; display: block; margin-bottom: 15px; }
-
         @media (max-width: 600px) { .target-grid { grid-template-columns: 1fr; } .header { flex-direction: column; text-align: center; } .search-box { width: 100%; justify-content: center; } .search-box input { flex: 1; min-width: 120px; } .modal-grid { grid-template-columns: 1fr; } .modal-header { flex-direction: column; text-align: center; } }
     </style>
 </head>
@@ -2249,13 +2637,13 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
         </div>
     </div>
     <div id="searchResult" style="display:none;" class="search-result">
-        <h4 style="margin-bottom:10px;color:#00d4ff;"><i class="fas fa-search"></i> Search Result</h4>
+        <h4 style="margin-bottom:10px;color:#ffd700;"><i class="fas fa-search"></i> Search Result</h4>
         <div id="searchResultContent"></div>
     </div>
     <div id="targetGrid" class="target-grid">
         <div class="empty-state"><i class="fas fa-crosshairs"></i> No active targets</div>
     </div>
-    <div class="footer">TORIKUL TARGET VIEWER v1.0 | <i class="fas fa-bolt" style="color:#00d4ff;"></i> Click on any target card for full profile</div>
+    <div class="footer">TORIKUL TARGET VIEWER v1.0 | <i class="fas fa-bolt" style="color:#ffd700;"></i> Click on any target card for full profile</div>
 </div>
 
 <div class="modal-overlay" id="profileModal">
@@ -2380,7 +2768,7 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
 
             content.innerHTML = `
                 <div class="modal-header">
-                    ${avatarUrl ? `<img class="modal-avatar" src="${avatarUrl}" onerror="this.style.display='none'" alt="Avatar">` : `<div class="modal-avatar" style="background:linear-gradient(135deg,#ff007f,#7f00ff);display:flex;align-items:center;justify-content:center;font-size:2rem;">${nickname.charAt(0)}</div>`}
+                    ${avatarUrl ? `<img class="modal-avatar" src="${avatarUrl}" onerror="this.style.display='none'" alt="Avatar">` : `<div class="modal-avatar" style="background:linear-gradient(135deg,#ffd700,#ffaa00);display:flex;align-items:center;justify-content:center;font-size:2rem;">${nickname.charAt(0)}</div>`}
                     <div>
                         <div class="modal-name">${escapeHtml(nickname)}</div>
                         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:4px;">
@@ -2416,7 +2804,7 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
                 <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;border-top:1px solid rgba(255,255,255,0.05);padding-top:12px;">
                     <span style="font-size:0.6rem;color:rgba(255,255,255,0.2);">📡 Data from mahir-info-api.vercel.app</span>
                     <span style="font-size:0.6rem;color:rgba(255,255,255,0.1);">|</span>
-                    <span style="font-size:0.6rem;color:rgba(255,0,127,0.3);">❤️ TORIKUL SYSTEM</span>
+                    <span style="font-size:0.6rem;color:rgba(255,215,0,0.3);">❤️ TORIKUL SYSTEM</span>
                 </div>
             `;
         } catch (error) {
@@ -2425,7 +2813,7 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
                     <i class="fas fa-exclamation-circle"></i>
                     <div>Failed to load profile</div>
                     <div style="font-size:0.7rem;color:rgba(255,255,255,0.3);margin-top:8px;">${escapeHtml(error.message)}</div>
-                    <button onclick="openProfile('${uid}')" style="margin-top:15px;padding:8px 20px;background:linear-gradient(135deg,#ff007f,#7f00ff);border:none;border-radius:8px;color:#fff;cursor:pointer;">Retry</button>
+                    <button onclick="openProfile('${uid}')" style="margin-top:15px;padding:8px 20px;background:linear-gradient(135deg,#ffd700,#ffaa00);border:none;border-radius:8px;color:#000;cursor:pointer;font-weight:600;">Retry</button>
                 </div>
             `;
         }
@@ -2461,8 +2849,8 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
                         contentDiv.innerHTML = `
                             <div class="result-item">
                                 <div>
-                                    <strong style="color:#00d4ff;font-family:monospace;font-size:1.1rem;">🎯 ${target.uid}</strong>
-                                    <button onclick="openProfile('${target.uid}')" style="margin-left:10px;padding:4px 12px;background:linear-gradient(135deg,#00d4ff,#7f00ff);border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.7rem;">📋 View Profile</button>
+                                    <strong style="color:#ffd700;font-family:monospace;font-size:1.1rem;">🎯 ${target.uid}</strong>
+                                    <button onclick="openProfile('${target.uid}')" style="margin-left:10px;padding:4px 12px;background:linear-gradient(135deg,#ffd700,#ffaa00);border:none;border-radius:6px;color:#000;cursor:pointer;font-size:0.7rem;font-weight:600;">📋 View Profile</button>
                                 </div>
                                 <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:0.8rem;color:rgba(255,255,255,0.5);">
                                     ${target.squad_leader ? `<span>👥 Leader: ${target.squad_leader}</span>` : ''}
@@ -2471,8 +2859,8 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
                                     ${target.mode ? `<span>🎮 ${target.mode}</span>` : ''}
                                     ${target.time_playing ? `<span>⏱ ${target.time_playing}</span>` : ''}
                                     ${target.last_check ? `<span>🕐 ${target.last_check}</span>` : ''}
-                                    <span style="background:rgba(255,255,255,0.05);padding:2px 8px;border-radius:6px;">${target.type}</span>
-                                    <span style="background:rgba(255,0,127,0.1);padding:2px 8px;border-radius:6px;color:#ff007f;">👤 ${target.added_by || 'TORIKUL'}</span>
+                                    <span style="background:rgba(255,215,0,0.15);padding:2px 8px;border-radius:6px;color:#ffd700;">${target.type}</span>
+                                    <span style="background:rgba(255,215,0,0.1);padding:2px 8px;border-radius:6px;color:#ffd700;">👤 ${target.added_by || 'TORIKUL'}</span>
                                 </div>
                             </div>
                         `;
@@ -2499,6 +2887,8 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
 </script>
 </body>
 </html>'''
+
+# ==================== HTML_TEMPLATE WITH PARALLEL STATUS REFRESH ====================
 
 HTML_TEMPLATE = '''<!DOCTYPE html>
 <html lang="en">
@@ -2540,6 +2930,12 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         .btn-sm { padding: 6px 12px; font-size: 0.75rem; }
         .btn-success { background: linear-gradient(135deg, #00b09b, #96c93d); color: #fff; }
         .btn-success:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(0,176,155,0.3); }
+        .btn-refresh { background: linear-gradient(135deg, #00d4ff, #7f00ff); color: #fff; animation: glow 2s infinite; }
+        .btn-refresh:hover { transform: translateY(-2px) scale(1.02); box-shadow: 0 5px 30px rgba(0,212,255,0.4); }
+        @keyframes glow {
+            0%, 100% { box-shadow: 0 0 20px rgba(0,212,255,0.2); }
+            50% { box-shadow: 0 0 40px rgba(0,212,255,0.4); }
+        }
         .upload-area { border: 2px dashed rgba(255,255,255,0.08); border-radius: 8px; padding: 15px; text-align: center; cursor: pointer; transition: 0.3s; }
         .upload-area:hover { border-color: rgba(255,0,127,0.3); background: rgba(255,0,127,0.03); }
         .upload-area.dragover { border-color: #ff007f; background: rgba(255,0,127,0.05); }
@@ -2579,6 +2975,9 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         .console-warning { color: #ffaa00; }
         .console-info { color: #4facfe; }
         .reset-info { font-size: 0.7rem; color: rgba(255,255,255,0.3); margin-top: 5px; }
+        .refresh-status-text { font-size: 0.7rem; color: rgba(255,255,255,0.4); margin-top: 8px; padding: 8px 12px; background: rgba(0,0,0,0.3); border-radius: 6px; border-left: 3px solid #00d4ff; }
+        .refresh-status-text .highlight { color: #00ffcc; }
+        .refresh-status-text .error { color: #ff4444; }
         @media (max-width: 768px) { .controls-grid { grid-template-columns: 1fr; } .input-group { flex-direction: column; } .btn { width: 100%; justify-content: center; } .header { flex-direction: column; text-align: center; } }
     </style>
 </head>
@@ -2589,7 +2988,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             <div>
                 <div class="logo"><i class="fas fa-bolt"></i> TORIKUL SYSTEM</div>
                 <div style="color: rgba(255,255,255,0.3); font-size:0.8rem;">
-                    SPAM CONTROL ENGINE v3.0
+                    SPAM CONTROL ENGINE v3.1
                     <span class="feature-badge"><i class="fas fa-sync"></i> Auto Status Check (5s)</span>
                     <span class="feature-badge"><i class="fas fa-users"></i> Squad Auto-Join</span>
                     <span class="feature-badge"><i class="fas fa-layer-group"></i> ROOM+GROUP</span>
@@ -2662,6 +3061,27 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             </div>
         </div>
 
+        <!-- ==================== STATUS REFRESH CARD ==================== -->
+        <div class="control-card" style="margin-bottom:20px; border: 1px solid rgba(0, 212, 255, 0.15);">
+            <h3><i class="fas fa-sync-alt" style="color:#00d4ff;"></i> STATUS REFRESH</h3>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                <button class="btn btn-refresh" onclick="refreshAllStatus()" style="flex:1; min-width:180px; padding:12px 20px; font-size:0.95rem;">
+                    <i class="fas fa-sync-alt"></i> 🔄 REFRESH ALL TARGETS STATUS
+                </button>
+                <div style="display:flex; gap:6px; flex-wrap:wrap; flex:1;">
+                    <input type="text" id="refreshSingleUid" placeholder="Single UID" style="padding:10px 14px; border:1px solid rgba(255,255,255,0.08); border-radius:8px; background:rgba(0,0,0,0.4); color:#fff; font-family:monospace; outline:none; min-width:120px; flex:1;">
+                    <button class="btn btn-outline" onclick="refreshSingleTarget()" style="padding:10px 16px;">
+                        <i class="fas fa-sync"></i> Refresh
+                    </button>
+                </div>
+            </div>
+            <div id="refreshStatus" class="refresh-status-text">
+                <i class="fas fa-info-circle"></i> Click the button above to refresh status of all active targets
+                <span style="float:right; font-size:0.6rem; color:rgba(255,255,255,0.2);">Last refresh: <span id="lastRefreshTime">Never</span></span>
+            </div>
+        </div>
+        <!-- ==================== END: STATUS REFRESH CARD ==================== -->
+
         <div class="control-card" style="margin-bottom:20px;">
             <h3><i class="fas fa-list"></i> ACTIVE TARGETS <span style="font-size:0.6rem; color:rgba(255,255,255,0.3);">(Status auto-check every 5s)</span></h3>
             <div id="activeList" class="active-list">
@@ -2677,6 +3097,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                 <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-info">Squad auto-join enabled (30 min duration)</span></div>
                 <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-info">Accounts: accs.txt</span></div>
                 <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-info">Auto reset every 10 minutes</span></div>
+                <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-info">Manual refresh available - Click "REFRESH ALL TARGETS STATUS"</span></div>
             </div>
         </div>
 
@@ -2687,7 +3108,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             </div>
         </div>
 
-        <div class="footer">TORIKUL SYSTEM v3.0 | <i class="fas fa-code"></i> Engine by TORIKUL | Status Check: 5s | Squad Auto-Join: 30min | Auto Reset: 10min | ROOM+GROUP</div>
+        <div class="footer">TORIKUL SYSTEM v3.1 | <i class="fas fa-code"></i> Engine by TORIKUL | Status Check: 5s | Squad Auto-Join: 30min | Auto Reset: 10min | ROOM+GROUP | Manual Refresh Available</div>
     </div>
 
     <script>
@@ -2716,6 +3137,145 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             document.body.appendChild(t);
             setTimeout(() => t.remove(), 4000);
         }
+
+        // ==================== REFRESH FUNCTIONS (GET METHOD) ====================
+        function refreshAllStatus() {
+            const statusDiv = document.getElementById('refreshStatus');
+            const btn = document.querySelector('.btn-refresh');
+            const lastRefreshSpan = document.getElementById('lastRefreshTime');
+            
+            statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin" style="color:#00d4ff;"></i> 🔄 Refreshing all targets status...';
+            statusDiv.style.color = '#00ffcc';
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Refreshing...';
+            
+            // GET method ব্যবহার করা হচ্ছে (POST ও সাপোর্ট করে)
+            fetch('/api/refresh-all-status', { 
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(d => {
+                if (d.success) {
+                    const now = new Date();
+                    const timeStr = now.toLocaleTimeString();
+                    if (lastRefreshSpan) {
+                        lastRefreshSpan.textContent = timeStr;
+                    }
+                    
+                    statusDiv.innerHTML = `<i class="fas fa-check-circle" style="color:#00ffcc;"></i> ✅ ${d.message} (${d.refreshed} targets) [${d.method || 'GET'}] 
+                        <span style="float:right; font-size:0.6rem; color:rgba(255,255,255,0.2);">Updated: ${timeStr}</span>`;
+                    statusDiv.style.color = '#00ffcc';
+                    showToast(`✅ ${d.message}`, 'success');
+                    refreshStatus();
+                    
+                    // Add to console
+                    const consoleBox = document.getElementById('consoleBox');
+                    const line = document.createElement('div');
+                    line.className = 'line';
+                    line.innerHTML = `<span style="color:rgba(255,255,255,0.3);">[Refresh]</span> <span class="console-success">✅ Refreshed ${d.refreshed} targets (${d.method || 'GET'})</span>`;
+                    consoleBox.appendChild(line);
+                    consoleBox.scrollTop = consoleBox.scrollHeight;
+                } else {
+                    statusDiv.innerHTML = `<i class="fas fa-exclamation-circle" style="color:#ff4444;"></i> ❌ ${d.message}`;
+                    statusDiv.style.color = '#ff4444';
+                    showToast(`❌ ${d.message}`, 'error');
+                }
+            })
+            .catch((err) => {
+                statusDiv.innerHTML = `<i class="fas fa-exclamation-circle" style="color:#ff4444;"></i> ❌ Refresh failed: ${err.message}`;
+                statusDiv.style.color = '#ff4444';
+                showToast('❌ Refresh failed', 'error');
+                console.error('Refresh error:', err);
+            })
+            .finally(() => {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-sync-alt"></i> 🔄 REFRESH ALL TARGETS STATUS';
+            });
+        }
+
+        function refreshSingleTarget() {
+            const uid = document.getElementById('refreshSingleUid').value.trim();
+            if (!uid) {
+                showToast('Enter a valid UID!', 'error');
+                return;
+            }
+            if (!/^\\d+$/.test(uid)) {
+                showToast('Invalid UID format!', 'error');
+                return;
+            }
+            
+            const statusDiv = document.getElementById('refreshStatus');
+            const lastRefreshSpan = document.getElementById('lastRefreshTime');
+            
+            statusDiv.innerHTML = `<i class="fas fa-spinner fa-spin" style="color:#00d4ff;"></i> 🔄 Refreshing target ${uid}...`;
+            statusDiv.style.color = '#00ffcc';
+            
+            // GET method ব্যবহার করা হচ্ছে
+            fetch(`/api/refresh-target-status/${uid}`, { 
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(d => {
+                if (d.success) {
+                    const now = new Date();
+                    const timeStr = now.toLocaleTimeString();
+                    if (lastRefreshSpan) {
+                        lastRefreshSpan.textContent = timeStr;
+                    }
+                    
+                    statusDiv.innerHTML = `<i class="fas fa-check-circle" style="color:#00ffcc;"></i> ✅ ${d.message} - Status: <span class="highlight">${d.details.status}</span>
+                        <span style="float:right; font-size:0.6rem; color:rgba(255,255,255,0.2);">Updated: ${timeStr}</span>`;
+                    statusDiv.style.color = '#00ffcc';
+                    showToast(`✅ ${d.message}`, 'success');
+                    refreshStatus();
+                    document.getElementById('refreshSingleUid').value = '';
+                    
+                    // Add to console
+                    const consoleBox = document.getElementById('consoleBox');
+                    const line = document.createElement('div');
+                    line.className = 'line';
+                    line.innerHTML = `<span style="color:rgba(255,255,255,0.3);">[Refresh]</span> <span class="console-success">✅ ${uid} → ${d.details.status} (${d.method || 'GET'})</span>`;
+                    consoleBox.appendChild(line);
+                    consoleBox.scrollTop = consoleBox.scrollHeight;
+                } else {
+                    statusDiv.innerHTML = `<i class="fas fa-exclamation-circle" style="color:#ff4444;"></i> ❌ ${d.message}`;
+                    statusDiv.style.color = '#ff4444';
+                    showToast(`❌ ${d.message}`, 'error');
+                }
+            })
+            .catch((err) => {
+                statusDiv.innerHTML = `<i class="fas fa-exclamation-circle" style="color:#ff4444;"></i> ❌ Refresh failed: ${err.message}`;
+                statusDiv.style.color = '#ff4444';
+                showToast('❌ Refresh failed', 'error');
+                console.error('Refresh error:', err);
+            });
+        }
+
+        // Enter key support for single refresh
+        document.addEventListener('DOMContentLoaded', function() {
+            const input = document.getElementById('refreshSingleUid');
+            if (input) {
+                input.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        refreshSingleTarget();
+                    }
+                });
+            }
+        });
+        // ==================== END REFRESH FUNCTIONS ====================
 
         function resetAccounts() {
             if (!confirm('⚠️ Reset all accounts? This will disconnect and reconnect all bots.')) return;
@@ -2842,6 +3402,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             getAccountCount();
         }
 
+        // Initial refresh
         setInterval(refreshStatus, 5000);
         refreshStatus();
         document.getElementById('spamUid').addEventListener('keypress', e => { if (e.key === 'Enter') startSpam(); });
@@ -2873,9 +3434,10 @@ def main():
     {RS}
     """)
 
-    # ১. স্ট্যাটাস চেকার থ্রেড
+    # Start status checker thread
     status_thread = Thread(target=status_checker_thread, daemon=True)
     status_thread.start()
+    print(f"{G}✅ Status checker thread started (every {STATUS_CHECK_INTERVAL}s){RS}")
 
     # ২. অটো রিসেট থ্রেড চালু করা (প্রতি ১০ মিনিটে)
     reset_thread = Thread(target=auto_reset_accounts, daemon=True)
