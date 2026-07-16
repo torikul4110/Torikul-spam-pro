@@ -2,7 +2,7 @@ import os, sys, time, json, ssl, socket, threading, asyncio, base64, binascii, r
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from threading import Thread
-from flask import Flask, request, jsonify, render_template_string, session, redirect, url_for, Response, stream_with_context
+from flask import Flask, request, jsonify, render_template_string, session, redirect, url_for, Response, stream_with_context, send_file
 from functools import wraps
 import requests
 import urllib3
@@ -18,7 +18,7 @@ from xC4 import *
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==================== LOGIN CONFIG ====================
-ADMIN_PASSWORD = "TORIKULJOD"
+ADMIN_PASSWORD = "MAHIRJOD"
 SECRET_KEY = "mahir_system_secret_key_2024"
 
 # ==================== ফ্লাস্ক অ্যাপ ====================
@@ -43,13 +43,14 @@ spam_threads = {}
 spam_threads_lock = threading.Lock()
 target_status_cache = {}
 squad_targets = {}
-SQUAD_JOIN_DURATION = 30 * 60
+SQUAD_JOIN_DURATION = 5 * 60 * 60
 STATUS_CHECK_INTERVAL = 1
 ACCOUNT_REFRESH_INTERVAL = 10 * 60
 
 ACCOUNTS_FILE = "accs.txt"
 SQUAD_DATA_FILE = "squad_data.json"
-TARGETS_PASSWORD = "HUNTERTORIKUL"
+TARGETS_PASSWORD = "HUNTERMAHIR"
+DEFAULT_BANNER = "https://mahir-photo-url.vercel.app/image/Picsart_26-06-20_16-14-53-925.jpg"
 is_resetting = False  # রিসেট চলছে কিনা ট্র্যাক করার জন্য
 
 C = "\033[96m"
@@ -154,7 +155,7 @@ def load_unified_accounts(filename="accs.txt"):
                         processed_list.append({'id': uid, 'password': pwd})
         
         for i, acc in enumerate(processed_list):
-            acc_type = 'group' if (i % 10) < 4 else 'room'
+            acc_type = 'group' if (i % 10) < 9 else 'room'
             acc['type'] = acc_type
             all_accounts.append(acc)
             
@@ -616,7 +617,7 @@ def create_badge_join_packet(key, iv, target_uid, badge_value, region="BD"):
                 3: 1,
                 4: 1,
                 5: bytes([1, 7, 9, 10, 11, 18, 25, 26, 32]),
-                6: "[C][B][FF0000] TORIKUL BADGE",
+                6: "[C][B][FF0000] MAHIR BADGE",
                 7: 330,
                 8: 1000,
                 10: region.upper(),
@@ -776,7 +777,7 @@ def create_change_squad_size_packet(key, iv, target_uid, region="BD"):
             2: {
                 1: int(target_uid),
                 2: 1,
-                3: 2,
+                3: 4,
                 4: 1,
                 5: "\x1a",
                 8: 12,
@@ -803,7 +804,7 @@ def create_change_squad_size_packet(key, iv, target_uid, region="BD"):
         return None
 
 # ==================== SPAM WORKER FUNCTIONS ====================
-def send_room_badge_spam(client, target_uid):
+def send_room_badge_spam(client, target_uid, badge_value):
     total_sent = 0
     
     try:
@@ -828,25 +829,24 @@ def send_room_badge_spam(client, target_uid):
         except:
             pass
 
-        for badge_name, badge_value in BADGES.items():
-            try:
-                badge_pkt = create_badge_join_packet(client.key, client.iv, target_uid, badge_value)
-                if badge_pkt:
-                    try:
-                        client.CliEnts2.send(badge_pkt)
-                        total_sent += 1
-                        time.sleep(0.03)
-                    except:
-                        pass
-            except:
-                pass
+        # লুপ সরিয়ে দেওয়া হয়েছে, এখন সরাসরি badge_value ব্যবহার করবে
+        try:
+            badge_pkt = create_badge_join_packet(client.key, client.iv, target_uid, badge_value)
+            if badge_pkt:
+                try:
+                    client.CliEnts2.send(badge_pkt)
+                    total_sent += 1
+                except:
+                    pass
+        except:
+            pass
                 
     except Exception as e:
         pass
     
     return total_sent
 
-def send_group_badge_spam(client, target_uid):
+def send_group_badge_spam(client, target_uid, badge_value):
     total_sent = 0
     
     try:
@@ -880,18 +880,17 @@ def send_group_badge_spam(client, target_uid):
             except:
                 pass
         
-        for badge_name, badge_value in BADGES.items():
-            try:
-                badge_pkt = create_badge_join_packet(client.key, client.iv, target_uid, badge_value)
-                if badge_pkt:
-                    try:
-                        client.CliEnts2.send(badge_pkt)
-                        total_sent += 1
-                        time.sleep(0.03)
-                    except:
-                        pass
-            except:
-                pass
+        # লুপ সরিয়ে দেওয়া হয়েছে, এখন সরাসরি badge_value ব্যবহার করবে
+        try:
+            badge_pkt = create_badge_join_packet(client.key, client.iv, target_uid, badge_value)
+            if badge_pkt:
+                try:
+                    client.CliEnts2.send(badge_pkt)
+                    total_sent += 1
+                except:
+                    pass
+        except:
+            pass
                 
     except Exception as e:
         pass
@@ -947,10 +946,9 @@ def clean_and_load_squad_targets():
         if (current_time - start_time).total_seconds() < SQUAD_JOIN_DURATION:
             updated_data[uid] = info
             start_spam(uid, 'squad')
-            print(f"{G}✅ Restored Squad Target: {uid} (Remaining: {int(30 - (current_time - start_time).total_seconds()/60)} min){RS}")
+            print(f"{G}✅ Restored Squad Target: {uid} (Remaining: {int(300 - (current_time - start_time).total_seconds()/60)} min){RS}")
         else:
-            remove_target_from_file(uid)
-            print(f"{R}🗑️ Expired & Removed: {uid}{RS}")
+            print(f"{R}⏰ Expired: {uid} (Still kept in file){RS}")
             
     save_squad_json(updated_data)
 
@@ -960,10 +958,14 @@ def add_squad_leader_as_target(squad_leader_uid, original_target_uid):
             return False
         
         start_time = datetime.now()
+        # এখানেও ব্যানার ইউআরএল জেনারেট করুন
+        banner_url = f"https://mahir-banner-api.vercel.app/profile?uid={squad_leader_uid}"
+
         active_spam_targets[squad_leader_uid] = {
             'type': 'squad',
             'start_time': start_time,
             'status': 'CHECKING',
+            'banner_url': banner_url, # এটি যোগ করা হলো
             'squad_leader': '',
             'last_check': datetime.now(),
             'is_spamming': True,
@@ -974,7 +976,7 @@ def add_squad_leader_as_target(squad_leader_uid, original_target_uid):
         }
         
         save_target_to_file(squad_leader_uid)
-        
+
         current_squad_data = load_squad_json()
         current_squad_data[str(squad_leader_uid)] = {
             'start_time': start_time.isoformat(),
@@ -994,7 +996,7 @@ def add_squad_leader_as_target(squad_leader_uid, original_target_uid):
             spam_threads[squad_leader_uid] = thread
         thread.start()
         
-        print(f"{G}✅ Squad leader {squad_leader_uid} saved to JSON & started (30 min){RS}")
+        print(f"{G}✅ Squad leader {squad_leader_uid} saved to JSON & started (5 hours){RS}")
         return True
 
 def update_target_status(target_uid):
@@ -1044,7 +1046,7 @@ def status_checker_thread():
             current_time = datetime.now()
             for squad_leader, data in list(squad_targets.items()):
                 if (current_time - data['start_time']).total_seconds() > SQUAD_JOIN_DURATION:
-                    print(f"{Y}⏰ Squad leader {squad_leader} duration expired (30 min){RS}")
+                    print(f"{Y}⏰ Squad leader {squad_leader} duration expired (5 hours){RS}")
                     with active_spam_lock:
                         if squad_leader in active_spam_targets:
                             del active_spam_targets[squad_leader]
@@ -1067,6 +1069,9 @@ def spam_worker(target_uid, spam_type='full'):
     total_requests = 0
     round_number = 0
     is_spamming = True
+    
+    # ব্যাজ ভ্যালুগুলোকে একটি লিস্টে নিয়ে আসা
+    badge_vals = list(BADGES.values())
 
     while True:
         with active_spam_lock:
@@ -1097,18 +1102,24 @@ def spam_worker(target_uid, spam_type='full'):
 
         round_number += 1
 
-        for client in clients_list:
+        # enumerate ব্যবহার করে ইনডেক্স (i) বের করা হয়েছে
+        for i, client in enumerate(clients_list):
             with active_spam_lock:
                 if target_uid not in active_spam_targets:
                     break
 
             try:
+                # ইনডেক্স অনুযায়ী প্রতিটি বোটকে আলাদা ব্যাজ দেওয়া হচ্ছে
+                assigned_badge = badge_vals[i % len(badge_vals)]
+                
                 is_group_account = getattr(client, 'is_group_account', False)
                 
                 if is_group_account:
-                    total_requests += send_group_badge_spam(client, target_uid)
+                    # সংশোধিত ফাংশন কল (badge_value সহ)
+                    total_requests += send_group_badge_spam(client, target_uid, assigned_badge)
                 else:
-                    total_requests += send_room_badge_spam(client, target_uid)
+                    # সংশোধিত ফাংশন কল (badge_value সহ)
+                    total_requests += send_room_badge_spam(client, target_uid, assigned_badge)
             except Exception as e:
                 pass
 
@@ -1138,10 +1149,14 @@ def start_spam(target_uid, spam_type='full'):
         if target_uid in active_spam_targets:
             return False, f"Already spamming {target_uid}"
         
+        # ইউআরএলটি এখানে তৈরি করে ডিকশনারিতে সেভ করা হচ্ছে
+        banner_url = f"https://mahir-banner-api.vercel.app/profile?uid={target_uid}"
+
         active_spam_targets[target_uid] = {
             'type': spam_type,
             'start_time': datetime.now(),
             'status': 'CHECKING',
+            'banner_url': banner_url, # এটি যোগ করা হলো
             'squad_leader': '',
             'last_check': datetime.now(),
             'is_spamming': True,
@@ -1188,6 +1203,9 @@ def stop_all_spam():
     return True, f"Stopped all spam ({len(targets)} targets)"
 
 def get_spam_status():
+    # ডিফল্ট ইমেজ ইউআরএল
+    DEFAULT_BANNER = "https://mahir-photo-url.vercel.app/image/Picsart_26-06-20_16-14-53-925.jpg"
+    
     with active_spam_lock:
         active_targets = []
         for target, info in active_spam_targets.items():
@@ -1199,27 +1217,20 @@ def get_spam_status():
             is_squad_leader = info.get('is_squad_leader', False)
             original_target = info.get('original_target', '')
             
+            # স্ট্যাটাস ডিসপ্লে লজিক আগের মতোই থাকবে...
             status_display = status
-            if status == 'SOLO':
-                status_display = '🟢 Solo'
-            elif status == 'INSQUAD':
-                status_display = '🔵 In Squad'
-            elif status == 'INGAME':
-                status_display = '🟡 In Game'
-            elif status == 'IN_ROOM':
-                status_display = '🟠 In Room'
-            elif status == 'OFFLINE':
-                status_display = '⚪ Offline'
-            elif status == 'SOCIAL_ISLAND':
-                status_display = '🟣 Social Island'
-            elif status == 'MATCHMAKING':
-                status_display = '🟣 Matchmaking'
-            elif status == 'CHECKING':
-                status_display = '⏳ Checking...'
-            else:
-                status_display = '⚪ Unknown'
+            if status == 'SOLO': status_display = '🟢 Solo'
+            elif status == 'INSQUAD': status_display = '🔵 In Squad'
+            elif status == 'INGAME': status_display = '🟡 In Game'
+            elif status == 'IN_ROOM': status_display = '🟠 In Room'
+            elif status == 'OFFLINE': status_display = '⚪ Offline'
+            elif status == 'SOCIAL_ISLAND': status_display = '🟣 Social Island'
+            elif status == 'MATCHMAKING': status_display = '🟣 Matchmaking'
+            elif status == 'CHECKING': status_display = '⏳ Checking...'
+            else: status_display = '⚪ Unknown'
             
-            banner_url = f"https://mahir-banner-api.vercel.app/profile?uid={target}"
+            # পরিবর্তন এখানে: সরাসরি info থেকে ব্যানার ইউআরএল নিবে, না থাকলে ডিফল্ট দেখাবে
+            banner_url = info.get('banner_url', f"https://mahir-banner-api.vercel.app/profile?uid={target}")
             
             active_targets.append({
                 'uid': target,
@@ -1235,7 +1246,8 @@ def get_spam_status():
                 'last_check': info.get('last_check', datetime.now()).strftime('%H:%M:%S'),
                 'is_online': is_online,
                 'is_squad_leader': is_squad_leader,
-                'original_target': original_target
+                'original_target': original_target,
+                'default_banner': DEFAULT_BANNER # ফ্রন্টএন্ডে ব্যবহারের জন্য পাঠানো হচ্ছে
             })
     
     with connected_clients_lock:
@@ -1534,7 +1546,7 @@ class FF_CLient():
         except:
             pass
 
-# ==================== ACCOUNT RUNNER & RESETTER (FIXED) ====================
+# ==================== ACCOUNT RUNNER & RESETTER (REMOVED AUTO RESET) ====================
 
 def start_account(account):
     """প্রতিটি অ্যাকাউন্টের লগইন প্রসেস শুরু করে"""
@@ -1609,12 +1621,6 @@ def reset_accounts():
         print(f"{R}❌ [FATAL ERROR] Reset failed: {e}{RS}")
         return False, f"System error during reset: {str(e)}"
 
-def auto_reset_accounts():
-    """প্রতি ১০ মিনিট পরপর একাউন্টগুলো রিসেট করার লুপ"""
-    while True:
-        time.sleep(ACCOUNT_REFRESH_INTERVAL)
-        reset_accounts()
-
 # ==================== FLASK ROUTES ====================
 @app.route('/login', methods=['GET', 'POST'])
 def login_page():
@@ -1669,30 +1675,27 @@ def stream_targets():
                     is_squad_leader = info.get('is_squad_leader', False)
                     original_target = info.get('original_target', '')
                     
+                    # স্ট্যাটাস ডিসপ্লে লজিক
                     status_display = status
-                    if status == 'SOLO':
-                        status_display = '🟢 Solo'
-                    elif status == 'INSQUAD':
-                        status_display = '🔵 In Squad'
-                    elif status == 'INGAME':
-                        status_display = '🟡 In Game'
-                    elif status == 'IN_ROOM':
-                        status_display = '🟠 In Room'
-                    elif status == 'OFFLINE':
-                        status_display = '⚪ Offline'
-                    elif status == 'SOCIAL_ISLAND':
-                        status_display = '🟣 Social Island'
-                    elif status == 'MATCHMAKING':
-                        status_display = '🟣 Matchmaking'
-                    else:
-                        status_display = '⚪ Unknown'
+                    if status == 'SOLO': status_display = '🟢 Solo'
+                    elif status == 'INSQUAD': status_display = '🔵 In Squad'
+                    elif status == 'INGAME': status_display = '🟡 In Game'
+                    elif status == 'IN_ROOM': status_display = '🟠 In Room'
+                    elif status == 'OFFLINE': status_display = '⚪ Offline'
+                    elif status == 'SOCIAL_ISLAND': status_display = '🟣 Social Island'
+                    elif status == 'MATCHMAKING': status_display = '🟣 Matchmaking'
+                    else: status_display = '⚪ Unknown'
+                    
+                    # পরিবর্তন এখানে: info ডিকশনারি থেকে ব্যানার ইউআরএল নেয়া হচ্ছে
+                    # যদি কোনো কারণে banner_url না থাকে তবেই নতুন স্ট্রিং তৈরি হবে
+                    banner_url = info.get('banner_url', f"https://mahir-banner-api.vercel.app/profile?uid={uid}")
                     
                     cache_info = target_status_cache.get(uid, {})
                     targets.append({
                         'uid': uid,
                         'type': 'SQUAD' if is_squad_leader else info.get('type', 'full'),
                         'elapsed_minutes': int(elapsed / 60),
-                        'banner_url': f"https://mahir-banner-api.vercel.app/profile?uid={uid}",
+                        'banner_url': banner_url, # লুপে বারবার নতুন রিকোয়েস্ট হবে না
                         'status': status,
                         'status_display': status_display,
                         'squad_leader': squad_leader,
@@ -2348,33 +2351,32 @@ def api_targets():
     with active_spam_lock:
         targets = []
         for uid, info in active_spam_targets.items():
-            elapsed = (datetime.now() - info['start_time']).total_seconds() if info.get('start_time') else 0
+            start_time = info.get('start_time')
+            elapsed = (datetime.now() - start_time).total_seconds() if start_time else 0
             status = info.get('status', 'UNKNOWN')
             squad_leader = info.get('squad_leader', '')
             is_online = info.get('is_online', False)
             is_squad_leader = info.get('is_squad_leader', False)
             original_target = info.get('original_target', '')
             
+            # স্ট্যাটাস ডিসপ্লে লজিক
             status_display = status
-            if status == 'SOLO':
-                status_display = '🟢 Solo'
-            elif status == 'INSQUAD':
-                status_display = '🔵 In Squad'
-            elif status == 'INGAME':
-                status_display = '🟡 In Game'
-            elif status == 'IN_ROOM':
-                status_display = '🟠 In Room'
-            elif status == 'OFFLINE':
-                status_display = '⚪ Offline'
-            else:
-                status_display = '⚪ Unknown'
+            if status == 'SOLO': status_display = '🟢 Solo'
+            elif status == 'INSQUAD': status_display = '🔵 In Squad'
+            elif status == 'INGAME': status_display = '🟡 In Game'
+            elif status == 'IN_ROOM': status_display = '🟠 In Room'
+            elif status == 'OFFLINE': status_display = '⚪ Offline'
+            else: status_display = '⚪ Unknown'
+            
+            # পরিবর্তন এখানে: info ডিকশনারি থেকে ব্যানার ইউআরএল রিড করা হচ্ছে
+            banner_url = info.get('banner_url', f"https://mahir-banner-api.vercel.app/profile?uid={uid}")
             
             cache_info = target_status_cache.get(uid, {})
             targets.append({
                 'uid': uid,
                 'type': 'SQUAD' if is_squad_leader else info.get('type', 'full'),
                 'elapsed_minutes': int(elapsed/60),
-                'banner_url': f"https://mahir-banner-api.vercel.app/profile?uid={uid}",
+                'banner_url': banner_url,
                 'status': status,
                 'status_display': status_display,
                 'squad_leader': squad_leader,
@@ -2428,13 +2430,273 @@ def stream_console():
     
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
+# ==================== NEW ROUTES FOR FILES AND SQUAD LEADER MANAGEMENT ====================
+
+@app.route('/api/download/targets', methods=['GET'])
+@login_required
+def download_targets_file():
+    """Download target.txt file"""
+    if os.path.exists('target.txt'):
+        with open('target.txt', 'r', encoding='utf-8') as f:
+            content = f.read()
+        return Response(content, mimetype='text/plain', headers={'Content-Disposition': 'attachment;filename=target.txt'})
+    return jsonify({'success': False, 'message': 'target.txt not found'}), 404
+
+@app.route('/api/download/squad_data', methods=['GET'])
+@login_required
+def download_squad_data_file():
+    """Download squad_data.json file"""
+    if os.path.exists(SQUAD_DATA_FILE):
+        with open(SQUAD_DATA_FILE, 'r', encoding='utf-8') as f:
+            content = f.read()
+        return Response(content, mimetype='application/json', headers={'Content-Disposition': 'attachment;filename=squad_data.json'})
+    return jsonify({'success': False, 'message': 'squad_data.json not found'}), 404
+
+@app.route('/api/upload/targets', methods=['POST'])
+@login_required
+def upload_targets_file():
+    """Upload target.txt file - replaces existing targets and starts spam for them"""
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'message': 'No file uploaded'}), 400
+    
+    file = request.files['file']
+    if not file.filename.endswith('.txt'):
+        return jsonify({'success': False, 'message': 'Only .txt files allowed'}), 400
+    
+    try:
+        content = file.read().decode('utf-8')
+        
+        # Save the file
+        with open('target.txt', 'w', encoding='utf-8') as f:
+            f.write(content)
+        
+        # Parse UIDs and start spam
+        uids = []
+        for line in content.splitlines():
+            line = line.strip()
+            if line and line.isdigit():
+                uids.append(line)
+        
+        started = []
+        failed = []
+        for uid in uids:
+            success, message = start_spam(uid, 'full')
+            if success:
+                started.append(uid)
+            else:
+                failed.append({'uid': uid, 'reason': message})
+        
+        return jsonify({
+            'success': True,
+            'message': f'Uploaded target.txt with {len(uids)} UIDs. Started: {len(started)}, Failed: {len(failed)}',
+            'started': started,
+            'failed': failed,
+            'total': len(uids)
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
+
+@app.route('/api/upload/squad_data', methods=['POST'])
+@login_required
+def upload_squad_data_file():
+    """Upload squad_data.json file"""
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'message': 'No file uploaded'}), 400
+    
+    file = request.files['file']
+    if not file.filename.endswith('.json'):
+        return jsonify({'success': False, 'message': 'Only .json files allowed'}), 400
+    
+    try:
+        content = file.read().decode('utf-8')
+        # Validate JSON
+        data = json.loads(content)
+        
+        # Save the file
+        with open(SQUAD_DATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4)
+        
+        # Process and start squad targets
+        current_time = datetime.now()
+        restored = 0
+        expired = 0
+        
+        for uid, info in data.items():
+            try:
+                start_time = datetime.fromisoformat(info['start_time'])
+                if (current_time - start_time).total_seconds() < SQUAD_JOIN_DURATION:
+                    start_spam(uid, 'squad')
+                    restored += 1
+                else:
+                    expired += 1
+            except:
+                pass
+        
+        return jsonify({
+            'success': True,
+            'message': f'Uploaded squad_data.json with {len(data)} entries. Restored: {restored}, Expired: {expired}',
+            'total': len(data),
+            'restored': restored,
+            'expired': expired
+        })
+        
+    except json.JSONDecodeError:
+        return jsonify({'success': False, 'message': 'Invalid JSON format'}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
+
+@app.route('/api/squad-leaders', methods=['GET'])
+@login_required
+def get_squad_leaders():
+    """Get all squad leaders with their details and expiration time"""
+    try:
+        data = load_squad_json()
+        current_time = datetime.now()
+        leaders = []
+        
+        for uid, info in data.items():
+            start_time = datetime.fromisoformat(info['start_time'])
+            elapsed = (current_time - start_time).total_seconds()
+            remaining = max(0, SQUAD_JOIN_DURATION - elapsed)
+            is_expired = remaining <= 0
+            
+            # Get target info if available
+            target_info = {}
+            if uid in active_spam_targets:
+                target_info = active_spam_targets[uid]
+            
+            leaders.append({
+                'uid': uid,
+                'original_target': info.get('original_target', ''),
+                'start_time': start_time.isoformat(),
+                'elapsed_minutes': int(elapsed / 60),
+                'remaining_minutes': int(remaining / 60),
+                'is_expired': is_expired,
+                'status': target_info.get('status', 'UNKNOWN'),
+                'is_online': target_info.get('is_online', False),
+                'spam_active': uid in active_spam_targets
+            })
+        
+        # Sort by remaining time (active first)
+        leaders.sort(key=lambda x: (x['is_expired'], -x['remaining_minutes']))
+        
+        return jsonify({
+            'success': True,
+            'total': len(leaders),
+            'leaders': leaders,
+            'expired_count': len([l for l in leaders if l['is_expired']]),
+            'active_count': len([l for l in leaders if not l['is_expired']])
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
+
+@app.route('/api/squad-leaders/cleanup', methods=['POST'])
+@login_required
+def cleanup_squad_leaders():
+    """Remove expired squad leaders (more than 5 hours old) from squad_data.json and target list"""
+    try:
+        data = load_squad_json()
+        current_time = datetime.now()
+        removed = []
+        kept = {}
+        
+        for uid, info in data.items():
+            start_time = datetime.fromisoformat(info['start_time'])
+            elapsed = (current_time - start_time).total_seconds()
+            
+            if elapsed >= SQUAD_JOIN_DURATION:
+                # Expired - remove from active spam if present
+                with active_spam_lock:
+                    if uid in active_spam_targets:
+                        del active_spam_targets[uid]
+                    if uid in target_status_cache:
+                        del target_status_cache[uid]
+                removed.append(uid)
+            else:
+                kept[uid] = info
+        
+        # Save updated data
+        save_squad_json(kept)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Cleaned up {len(removed)} expired squad leaders',
+            'removed': removed,
+            'kept_count': len(kept),
+            'removed_count': len(removed)
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
+
+@app.route('/api/squad-leaders/remove/<uid>', methods=['POST'])
+@login_required
+def remove_squad_leader(uid):
+    """Remove a specific squad leader from squad_data.json and stop spam"""
+    try:
+        data = load_squad_json()
+        
+        if uid not in data:
+            return jsonify({'success': False, 'message': f'UID {uid} not found in squad_data.json'}), 404
+        
+        # Stop spam if active
+        stop_spam(uid)
+        
+        # Remove from data
+        del data[uid]
+        save_squad_json(data)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Removed squad leader {uid}',
+            'uid': uid
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
+
+@app.route('/api/cleanup/expired-targets', methods=['POST'])
+@login_required
+def cleanup_expired_targets():
+    """Clean up all expired spam targets from target.txt and active targets list"""
+    try:
+        with active_spam_lock:
+            targets_to_remove = []
+            current_time = datetime.now()
+            
+            for uid, info in active_spam_targets.items():
+                start_time = info.get('start_time')
+                if start_time:
+                    elapsed = (current_time - start_time).total_seconds()
+                    # If target is older than 5 hours and marked as squad leader
+                    if elapsed >= SQUAD_JOIN_DURATION and info.get('is_squad_leader', False):
+                        targets_to_remove.append(uid)
+        
+        removed = []
+        for uid in targets_to_remove:
+            success, _ = stop_spam(uid)
+            if success:
+                removed.append(uid)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Cleaned up {len(removed)} expired squad leader targets',
+            'removed': removed,
+            'removed_count': len(removed)
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
+
 # ==================== TEMPLATES ====================
 LOGIN_TEMPLATE = '''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TORIKUL SYSTEM | Secure Login</title>
+    <title>MAHIR SYSTEM | Secure Login</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
     <style>
@@ -2457,14 +2719,14 @@ LOGIN_TEMPLATE = '''<!DOCTYPE html>
 <body>
     <canvas id="matrix-canvas"></canvas>
     <div class="login-box">
-        <h1>TORIKUL SYSTEM</h1>
+        <h1>MAHIR SYSTEM</h1>
         <p class="sub">Access Control Panel</p>
         <form action="/login" method="POST">
             <div class="input-group"><i class="fas fa-key"></i><input type="password" name="password" placeholder="Enter Security Password" required></div>
             <button type="submit" class="btn-login"><i class="fas fa-unlock-alt"></i> UNLOCK</button>
             {% if error %}<div class="error"><i class="fas fa-exclamation-circle"></i> {{ error }}</div>{% endif %}
         </form>
-        <div class="footer-text">TORIKUL ENGINE v3.0</div>
+        <div class="footer-text">MAHIR ENGINE v3.0</div>
     </div>
     <script>
         const canvas = document.getElementById('matrix-canvas'); const ctx = canvas.getContext('2d');
@@ -2488,7 +2750,7 @@ TARGETS_LOGIN_TEMPLATE = '''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🎯 TARGETS | TORIKUL</title>
+    <title>🎯 TARGETS | MAHIR</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
     <style>
@@ -2518,7 +2780,7 @@ TARGETS_LOGIN_TEMPLATE = '''<!DOCTYPE html>
             <button type="submit" class="btn-login"><i class="fas fa-unlock-alt"></i> VIEW TARGETS</button>
             {% if error %}<div class="error"><i class="fas fa-exclamation-circle"></i> {{ error }}</div>{% endif %}
         </form>
-        <div class="footer-text">TORIKUL TARGET VIEWER v1.0</div>
+        <div class="footer-text">MAHIR TARGET VIEWER v1.0</div>
     </div>
     <script>
         const canvas = document.getElementById('matrix-canvas'); const ctx = canvas.getContext('2d');
@@ -2543,7 +2805,7 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🎯 TARGETS | TORIKUL SYSTEM</title>
+    <title>🎯 TARGETS | MAHIR SYSTEM</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <style>
@@ -2643,7 +2905,7 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
     <div id="targetGrid" class="target-grid">
         <div class="empty-state"><i class="fas fa-crosshairs"></i> No active targets</div>
     </div>
-    <div class="footer">TORIKUL TARGET VIEWER v1.0 | <i class="fas fa-bolt" style="color:#ffd700;"></i> Click on any target card for full profile</div>
+    <div class="footer">MAHIR TARGET VIEWER v1.0 | <i class="fas fa-bolt" style="color:#ffd700;"></i> Click on any target card for full profile</div>
 </div>
 
 <div class="modal-overlay" id="profileModal">
@@ -2690,22 +2952,21 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
         }
         targetGrid.innerHTML = targets.map((t, index) => `
             <div class="target-card" style="animation-delay: ${index * 0.05}s" onclick="openProfile('${t.uid}')">
-                <img src="${t.banner_url}" alt="Banner for ${t.uid}" loading="lazy" onerror="this.src='/api/profile/${t.uid}'">
+                <img src="${t.banner_url}" 
+                     alt="Banner" 
+                     onerror="this.onerror=null; this.src='https://mahir-photo-url.vercel.app/image/Picsart_26-06-20_16-14-53-925.jpg';">
                 <div class="info">
                     <span class="uid">🎯 ${t.uid}</span>
                     ${t.squad_leader ? `<span class="squad-leader">👥 L:${t.squad_leader}</span>` : ''}
-                    ${t.is_squad_leader ? `<span class="squad-leader">👑 SQUAD LEADER</span>` : ''}
-                    ${t.original_target ? `<span class="squad-leader">🎯 From:${t.original_target}</span>` : ''}
                     <span class="type">${t.type}</span>
                     <span class="time"><i class="fas fa-clock"></i> ${t.elapsed_minutes}m</span>
-                    <div class="added-info">👤 ADDED BY: ${t.added_by || 'TORIKUL'} ${t.added_time ? '| ' + t.added_time : ''}</div>
                 </div>
             </div>
         `).join('');
     }
 
     function refreshTargets() {
-        fetch('/api/targets?pass=HUNTERTORIKUL')
+        fetch('/api/targets?pass=HUNTERMAHIR')
             .then(r => r.json())
             .then(data => {
                 if (data.success) {
@@ -2804,7 +3065,7 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
                 <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;border-top:1px solid rgba(255,255,255,0.05);padding-top:12px;">
                     <span style="font-size:0.6rem;color:rgba(255,255,255,0.2);">📡 Data from mahir-info-api.vercel.app</span>
                     <span style="font-size:0.6rem;color:rgba(255,255,255,0.1);">|</span>
-                    <span style="font-size:0.6rem;color:rgba(255,215,0,0.3);">❤️ TORIKUL SYSTEM</span>
+                    <span style="font-size:0.6rem;color:rgba(255,215,0,0.3);">❤️ MAHIR SYSTEM</span>
                 </div>
             `;
         } catch (error) {
@@ -2837,7 +3098,7 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
             alert('Please enter a valid UID!');
             return;
         }
-        fetch(`/api/targets?pass=HUNTERTORIKUL`)
+        fetch(`/api/targets?pass=HUNTERMAHIR`)
             .then(r => r.json())
             .then(data => {
                 const resultDiv = document.getElementById('searchResult');
@@ -2860,7 +3121,7 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
                                     ${target.time_playing ? `<span>⏱ ${target.time_playing}</span>` : ''}
                                     ${target.last_check ? `<span>🕐 ${target.last_check}</span>` : ''}
                                     <span style="background:rgba(255,215,0,0.15);padding:2px 8px;border-radius:6px;color:#ffd700;">${target.type}</span>
-                                    <span style="background:rgba(255,215,0,0.1);padding:2px 8px;border-radius:6px;color:#ffd700;">👤 ${target.added_by || 'TORIKUL'}</span>
+                                    <span style="background:rgba(255,215,0,0.1);padding:2px 8px;border-radius:6px;color:#ffd700;">👤 ${target.added_by || 'MAHIR'}</span>
                                 </div>
                             </div>
                         `;
@@ -2878,7 +3139,7 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
         document.getElementById('searchInput').value = '';
     }
 
-    fetch('/api/targets?pass=HUNTERTORIKUL')
+    fetch('/api/targets?pass=HUNTERMAHIR')
         .then(r => r.json())
         .then(data => {
             if (data.success) renderTargets(data.targets);
@@ -2888,13 +3149,13 @@ TARGETS_TEMPLATE = '''<!DOCTYPE html>
 </body>
 </html>'''
 
-# ==================== HTML_TEMPLATE WITH PARALLEL STATUS REFRESH ====================
+# ==================== HTML_TEMPLATE WITH FILES AND SQUAD LEADER MANAGEMENT ====================
 
 HTML_TEMPLATE = '''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🔥 TORIKUL SYSTEM - SPAM CONTROL</title>
+    <title>🔥 MAHIR SYSTEM - SPAM CONTROL</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -2978,7 +3239,23 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         .refresh-status-text { font-size: 0.7rem; color: rgba(255,255,255,0.4); margin-top: 8px; padding: 8px 12px; background: rgba(0,0,0,0.3); border-radius: 6px; border-left: 3px solid #00d4ff; }
         .refresh-status-text .highlight { color: #00ffcc; }
         .refresh-status-text .error { color: #ff4444; }
-        @media (max-width: 768px) { .controls-grid { grid-template-columns: 1fr; } .input-group { flex-direction: column; } .btn { width: 100%; justify-content: center; } .header { flex-direction: column; text-align: center; } }
+        /* Squad Leader Styles */
+        .squad-leader-item { background: rgba(255,215,0,0.05); border-left: 3px solid #ffd700; padding: 8px 12px; margin: 4px 0; border-radius: 6px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; font-size: 0.8rem; gap: 6px; }
+        .squad-leader-item .uid { color: #ffd700; font-family: monospace; font-weight: bold; }
+        .squad-leader-item .expired { color: #ff4444; }
+        .squad-leader-item .active { color: #00ffcc; }
+        .file-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 8px; }
+        .file-btn { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 10px; text-align: center; cursor: pointer; transition: 0.3s; }
+        .file-btn:hover { background: rgba(255,255,255,0.06); border-color: rgba(255,0,127,0.2); }
+        .file-btn i { font-size: 1.2rem; color: #ff007f; }
+        .file-btn .name { font-size: 0.7rem; color: rgba(255,255,255,0.4); margin-top: 2px; }
+        .file-btn .sub { font-size: 0.6rem; color: rgba(255,255,255,0.2); }
+        .btn-gold { background: linear-gradient(135deg, #ffd700, #ffaa00); color: #000; }
+        .btn-gold:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(255,215,0,0.3); }
+        @media (max-width: 768px) { .controls-grid { grid-template-columns: 1fr; } .input-group { flex-direction: column; } .btn { width: 100%; justify-content: center; } .header { flex-direction: column; text-align: center; } .file-grid { grid-template-columns: 1fr; } }
+        .squad-list { max-height: 200px; overflow-y: auto; margin-top: 8px; }
+        .squad-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+        .squad-actions .btn { flex: 1; min-width: 100px; justify-content: center; }
     </style>
 </head>
 <body>
@@ -2986,13 +3263,13 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     <div class="container">
         <div class="header">
             <div>
-                <div class="logo"><i class="fas fa-bolt"></i> TORIKUL SYSTEM</div>
+                <div class="logo"><i class="fas fa-bolt"></i> MAHIR SYSTEM</div>
                 <div style="color: rgba(255,255,255,0.3); font-size:0.8rem;">
-                    SPAM CONTROL ENGINE v3.1
+                    SPAM CONTROL ENGINE v3.2
                     <span class="feature-badge"><i class="fas fa-sync"></i> Auto Status Check (5s)</span>
-                    <span class="feature-badge"><i class="fas fa-users"></i> Squad Auto-Join</span>
+                    <span class="feature-badge"><i class="fas fa-users"></i> Squad Auto-Join (5h)</span>
                     <span class="feature-badge"><i class="fas fa-layer-group"></i> ROOM+GROUP</span>
-                    <span class="feature-badge"><i class="fas fa-clock"></i> Auto Reset: 10min</span>
+                    <span class="feature-badge"><i class="fas fa-file"></i> File Manager</span>
                 </div>
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
@@ -3022,9 +3299,59 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                     </div>
                     <div style="display:flex; flex-direction:column; gap:6px; min-width:120px;">
                         <button class="btn btn-success btn-sm" onclick="resetAccounts()"><i class="fas fa-sync-alt"></i> RESET ACCOUNTS</button>
-                        <div class="reset-info"><i class="fas fa-clock"></i> Auto reset every 10 min</div>
+                        <div class="reset-info"><i class="fas fa-info-circle"></i> Manual reset only</div>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- ==================== FILE MANAGER CARD ==================== -->
+        <div class="control-card" style="margin-bottom:20px; border: 1px solid rgba(255,215,0,0.1);">
+            <h3><i class="fas fa-folder-open" style="color:#ffd700;"></i> FILE MANAGER</h3>
+            <div class="file-grid">
+                <div class="file-btn" onclick="downloadFile('targets')">
+                    <i class="fas fa-download"></i>
+                    <div class="name">target.txt</div>
+                    <div class="sub">Download</div>
+                </div>
+                <div class="file-btn" onclick="document.getElementById('targetsFileInput').click()">
+                    <i class="fas fa-upload"></i>
+                    <div class="name">target.txt</div>
+                    <div class="sub">Upload</div>
+                    <input type="file" id="targetsFileInput" accept=".txt" style="display:none;" onchange="uploadFile('targets', this)">
+                </div>
+                <div class="file-btn" onclick="downloadFile('squad_data')">
+                    <i class="fas fa-download"></i>
+                    <div class="name">squad_data.json</div>
+                    <div class="sub">Download</div>
+                </div>
+                <div class="file-btn" onclick="document.getElementById('squadDataFileInput').click()">
+                    <i class="fas fa-upload"></i>
+                    <div class="name">squad_data.json</div>
+                    <div class="sub">Upload</div>
+                    <input type="file" id="squadDataFileInput" accept=".json" style="display:none;" onchange="uploadFile('squad_data', this)">
+                </div>
+                <div class="file-btn" onclick="downloadFile('accs')">
+                    <i class="fas fa-download"></i>
+                    <div class="name">accs.txt</div>
+                    <div class="sub">Download</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== SQUAD LEADER MANAGEMENT CARD ==================== -->
+        <div class="control-card" style="margin-bottom:20px; border: 1px solid rgba(255,215,0,0.15);">
+            <h3><i class="fas fa-crown" style="color:#ffd700;"></i> SQUAD LEADER MANAGEMENT</h3>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+                <button class="btn btn-gold btn-sm" onclick="refreshSquadLeaders()"><i class="fas fa-sync-alt"></i> Refresh List</button>
+                <button class="btn btn-danger btn-sm" onclick="cleanupExpiredSquadLeaders()"><i class="fas fa-trash"></i> Cleanup Expired (5h+)</button>
+                <button class="btn btn-warning btn-sm" onclick="cleanupExpiredTargets()"><i class="fas fa-broom"></i> Cleanup Expired Targets</button>
+            </div>
+            <div id="squadLeaderList" class="squad-list">
+                <div style="color:rgba(255,255,255,0.3); text-align:center; padding:15px;">Loading squad leaders...</div>
+            </div>
+            <div style="font-size:0.6rem; color:rgba(255,255,255,0.2); margin-top:5px;">
+                <i class="fas fa-info-circle"></i> Squad leaders expire after 5 hours. Click cleanup to remove expired ones.
             </div>
         </div>
 
@@ -3092,12 +3419,12 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         <div class="control-card" style="margin-bottom:20px;">
             <h3><i class="fas fa-terminal"></i> LIVE CONSOLE</h3>
             <div class="console-box" id="consoleBox">
-                <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-success">TORIKUL SPAM ENGINE Initialized</span></div>
+                <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-success">MAHIR SPAM ENGINE Initialized</span></div>
                 <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-info">Status check every 5 seconds</span></div>
-                <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-info">Squad auto-join enabled (30 min duration)</span></div>
+                <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-info">Squad auto-join enabled (5 hours duration)</span></div>
                 <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-info">Accounts: accs.txt</span></div>
-                <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-info">Auto reset every 10 minutes</span></div>
-                <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-info">Manual refresh available - Click "REFRESH ALL TARGETS STATUS"</span></div>
+                <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-info">File Manager: Download/Upload targets.txt & squad_data.json</span></div>
+                <div class="line"><span style="color:rgba(255,255,255,0.3);">[System]</span> <span class="console-info">Squad leaders expire after 5 hours</span></div>
             </div>
         </div>
 
@@ -3108,7 +3435,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             </div>
         </div>
 
-        <div class="footer">TORIKUL SYSTEM v3.1 | <i class="fas fa-code"></i> Engine by TORIKUL | Status Check: 5s | Squad Auto-Join: 30min | Auto Reset: 10min | ROOM+GROUP | Manual Refresh Available</div>
+        <div class="footer">MAHIR SYSTEM v3.2 | <i class="fas fa-code"></i> Engine by MAHIR | Status Check: 5s | Squad Auto-Join: 5hours | ROOM+GROUP | File Manager</div>
     </div>
 
     <script>
@@ -3138,7 +3465,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             setTimeout(() => t.remove(), 4000);
         }
 
-        // ==================== REFRESH FUNCTIONS (GET METHOD) ====================
+        // ==================== REFRESH FUNCTIONS ====================
         function refreshAllStatus() {
             const statusDiv = document.getElementById('refreshStatus');
             const btn = document.querySelector('.btn-refresh');
@@ -3149,7 +3476,6 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             btn.disabled = true;
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Refreshing...';
             
-            // GET method ব্যবহার করা হচ্ছে (POST ও সাপোর্ট করে)
             fetch('/api/refresh-all-status', { 
                 method: 'GET',
                 headers: { 'Content-Type': 'application/json' }
@@ -3174,7 +3500,6 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                     showToast(`✅ ${d.message}`, 'success');
                     refreshStatus();
                     
-                    // Add to console
                     const consoleBox = document.getElementById('consoleBox');
                     const line = document.createElement('div');
                     line.className = 'line';
@@ -3216,7 +3541,6 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             statusDiv.innerHTML = `<i class="fas fa-spinner fa-spin" style="color:#00d4ff;"></i> 🔄 Refreshing target ${uid}...`;
             statusDiv.style.color = '#00ffcc';
             
-            // GET method ব্যবহার করা হচ্ছে
             fetch(`/api/refresh-target-status/${uid}`, { 
                 method: 'GET',
                 headers: { 'Content-Type': 'application/json' }
@@ -3242,7 +3566,6 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                     refreshStatus();
                     document.getElementById('refreshSingleUid').value = '';
                     
-                    // Add to console
                     const consoleBox = document.getElementById('consoleBox');
                     const line = document.createElement('div');
                     line.className = 'line';
@@ -3263,7 +3586,6 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             });
         }
 
-        // Enter key support for single refresh
         document.addEventListener('DOMContentLoaded', function() {
             const input = document.getElementById('refreshSingleUid');
             if (input) {
@@ -3276,6 +3598,164 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             }
         });
         // ==================== END REFRESH FUNCTIONS ====================
+
+        // ==================== FILE MANAGEMENT FUNCTIONS ====================
+        function downloadFile(type) {
+            const urls = {
+                'targets': '/api/download/targets',
+                'squad_data': '/api/download/squad_data',
+                'accs': '/api/get/accs'
+            };
+            const names = {
+                'targets': 'target.txt',
+                'squad_data': 'squad_data.json',
+                'accs': 'accs.txt'
+            };
+            if (urls[type]) {
+                window.location.href = urls[type];
+                showToast(`Downloading ${names[type]}...`, 'info');
+            }
+        }
+
+        function uploadFile(type, input) {
+            const file = input.files[0];
+            if (!file) return;
+            
+            const urls = {
+                'targets': '/api/upload/targets',
+                'squad_data': '/api/upload/squad_data'
+            };
+            const names = {
+                'targets': 'target.txt',
+                'squad_data': 'squad_data.json'
+            };
+            
+            if (!urls[type]) return;
+            
+            const fd = new FormData();
+            fd.append('file', file);
+            
+            showToast(`Uploading ${names[type]}...`, 'info');
+            
+            fetch(urls[type], { method: 'POST', body: fd })
+                .then(r => r.json())
+                .then(d => {
+                    if (d.success) {
+                        showToast(`${d.message}`, 'success');
+                        refreshStatus();
+                        refreshSquadLeaders();
+                        const consoleBox = document.getElementById('consoleBox');
+                        const line = document.createElement('div');
+                        line.className = 'line';
+                        line.innerHTML = `<span style="color:rgba(255,255,255,0.3);">[File]</span> <span class="console-success">✅ Uploaded ${names[type]}: ${d.total || 'OK'}</span>`;
+                        consoleBox.appendChild(line);
+                        consoleBox.scrollTop = consoleBox.scrollHeight;
+                    } else {
+                        showToast(`Upload failed: ${d.message}`, 'error');
+                    }
+                })
+                .catch(() => showToast('Upload failed', 'error'));
+            
+            input.value = '';
+        }
+
+        // ==================== SQUAD LEADER FUNCTIONS ====================
+        function refreshSquadLeaders() {
+            const list = document.getElementById('squadLeaderList');
+            list.innerHTML = '<div style="color:rgba(255,255,255,0.3); text-align:center; padding:15px;">Loading...</div>';
+            
+            fetch('/api/squad-leaders')
+                .then(r => r.json())
+                .then(d => {
+                    if (d.success) {
+                        if (d.leaders && d.leaders.length > 0) {
+                            list.innerHTML = d.leaders.map(l => `
+                                <div class="squad-leader-item">
+                                    <div>
+                                        <span class="uid">👑 ${l.uid}</span>
+                                        ${l.is_expired ? '<span class="expired">⏰ EXPIRED</span>' : `<span class="active">⏱ ${l.remaining_minutes}m remaining</span>`}
+                                        <span style="font-size:0.6rem; color:rgba(255,255,255,0.3);">(Started: ${l.elapsed_minutes}m ago)</span>
+                                    </div>
+                                    <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                                        ${l.original_target ? `<span style="font-size:0.6rem; color:rgba(255,255,255,0.3);">🎯 From: ${l.original_target}</span>` : ''}
+                                        <span style="font-size:0.6rem; color:${l.is_online ? '#00ffcc' : '#ff4444'};">
+                                            ${l.is_online ? '🟢 Online' : '⚪ Offline'}
+                                        </span>
+                                        ${!l.is_expired ? `<button class="btn btn-danger btn-sm" onclick="removeSquadLeader('${l.uid}')" style="padding:2px 8px; font-size:0.6rem;">✕</button>` : ''}
+                                    </div>
+                                </div>
+                            `).join('');
+                        } else {
+                            list.innerHTML = '<div style="color:rgba(255,255,255,0.3); text-align:center; padding:15px;">No squad leaders found</div>';
+                        }
+                    } else {
+                        list.innerHTML = `<div style="color:#ff4444; text-align:center; padding:15px;">❌ ${d.message}</div>`;
+                    }
+                })
+                .catch(() => {
+                    list.innerHTML = '<div style="color:#ff4444; text-align:center; padding:15px;">❌ Failed to load squad leaders</div>';
+                });
+        }
+
+        function cleanupExpiredSquadLeaders() {
+            if (!confirm('⚠️ Remove all expired squad leaders (>5 hours)?')) return;
+            
+            showToast('Cleaning up expired squad leaders...', 'info');
+            
+            fetch('/api/squad-leaders/cleanup', { method: 'POST' })
+                .then(r => r.json())
+                .then(d => {
+                    if (d.success) {
+                        showToast(`✅ ${d.message}`, 'success');
+                        refreshSquadLeaders();
+                        refreshStatus();
+                        const consoleBox = document.getElementById('consoleBox');
+                        const line = document.createElement('div');
+                        line.className = 'line';
+                        line.innerHTML = `<span style="color:rgba(255,255,255,0.3);">[Cleanup]</span> <span class="console-success">✅ Removed ${d.removed_count} expired squad leaders</span>`;
+                        consoleBox.appendChild(line);
+                        consoleBox.scrollTop = consoleBox.scrollHeight;
+                    } else {
+                        showToast(`❌ ${d.message}`, 'error');
+                    }
+                })
+                .catch(() => showToast('❌ Cleanup failed', 'error'));
+        }
+
+        function cleanupExpiredTargets() {
+            if (!confirm('⚠️ Clean up expired targets from active list?')) return;
+            
+            showToast('Cleaning up expired targets...', 'info');
+            
+            fetch('/api/cleanup/expired-targets', { method: 'POST' })
+                .then(r => r.json())
+                .then(d => {
+                    if (d.success) {
+                        showToast(`✅ ${d.message}`, 'success');
+                        refreshStatus();
+                    } else {
+                        showToast(`❌ ${d.message}`, 'error');
+                    }
+                })
+                .catch(() => showToast('❌ Cleanup failed', 'error'));
+        }
+
+        function removeSquadLeader(uid) {
+            if (!confirm(`⚠️ Remove squad leader ${uid} from squad_data.json?`)) return;
+            
+            fetch(`/api/squad-leaders/remove/${uid}`, { method: 'POST' })
+                .then(r => r.json())
+                .then(d => {
+                    if (d.success) {
+                        showToast(`✅ ${d.message}`, 'success');
+                        refreshSquadLeaders();
+                        refreshStatus();
+                    } else {
+                        showToast(`❌ ${d.message}`, 'error');
+                    }
+                })
+                .catch(() => showToast('❌ Failed to remove', 'error'));
+        }
 
         function resetAccounts() {
             if (!confirm('⚠️ Reset all accounts? This will disconnect and reconnect all bots.')) return;
@@ -3305,7 +3785,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                 .catch(() => {});
         }
 
-        function uploadFile(file) {
+        function uploadFileOld(file) {
             const fd = new FormData(); fd.append('file', file);
             fetch('/api/upload/accs', { method: 'POST', body: fd })
                 .then(r => r.json())
@@ -3320,12 +3800,12 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         }
 
         document.getElementById('accsUpload').addEventListener('click', () => document.getElementById('accsFileInput').click());
-        document.getElementById('accsFileInput').addEventListener('change', function(e) { if (this.files.length) uploadFile(this.files[0]); });
+        document.getElementById('accsFileInput').addEventListener('change', function(e) { if (this.files.length) uploadFileOld(this.files[0]); });
 
         const uploadEl = document.getElementById('accsUpload');
         uploadEl.addEventListener('dragover', e => { e.preventDefault(); uploadEl.classList.add('dragover'); });
         uploadEl.addEventListener('dragleave', () => uploadEl.classList.remove('dragover'));
-        uploadEl.addEventListener('drop', e => { e.preventDefault(); uploadEl.classList.remove('dragover'); const files = e.dataTransfer.files; if (files.length) uploadFile(files[0]); });
+        uploadEl.addEventListener('drop', e => { e.preventDefault(); uploadEl.classList.remove('dragover'); const files = e.dataTransfer.files; if (files.length) uploadFileOld(files[0]); });
 
         function startSpam() {
             const uid = document.getElementById('spamUid').value.trim();
@@ -3359,7 +3839,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         function getStatusClass(status) { const map = { 'SOLO': 'solo', 'INSQUAD': 'insquad', 'INGAME': 'ingame', 'IN_ROOM': 'in_room', 'OFFLINE': 'offline' }; return map[status] || 'unknown'; }
 
         function refreshStatus() {
-            fetch('/api/status?pass=TORIKULJOD')
+            fetch('/api/status?pass=MAHIRJOD')
                 .then(r => r.json())
                 .then(d => {
                     if (d.success) {
@@ -3389,7 +3869,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                         }
                     }
                 }).catch(() => {});
-            fetch('/api/accounts?pass=TORIKULJOD')
+            fetch('/api/accounts?pass=MAHIRJOD')
                 .then(r => r.json())
                 .then(d => {
                     if (d.success) {
@@ -3405,6 +3885,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         // Initial refresh
         setInterval(refreshStatus, 5000);
         refreshStatus();
+        refreshSquadLeaders();
         document.getElementById('spamUid').addEventListener('keypress', e => { if (e.key === 'Enter') startSpam(); });
         document.getElementById('stopUid').addEventListener('keypress', e => { if (e.key === 'Enter') stopSingleSpam(); });
     </script>
@@ -3416,20 +3897,21 @@ def main():
     print(f"""
     {C}{BOLD}
     ╔══════════════════════════════════════════════════════════════════════╗
-    ║              🎯 TORIKUL SPAM SYSTEM v3.0 🎯                           ║
+    ║              🎯 MAHIR SPAM SYSTEM v3.2 🎯                           ║
     ║                                                                      ║
     ║     📁 accs.txt → Room Spam + Group/Squad Spam + Badge Spam         ║
     ║                                                                      ║
     ║     ✅ Room Spam + Group/Squad *Badge Spam (accs.txt)                ║
     ║     ✅ Auto Status Check: Every 3 seconds                           ║
-    ║     ✅ Squad Auto-Join: 30 minutes                                  ║
-    ║     ✅ Auto Account Reset: Every 10 minutes                         ║
-    ║     ✅ Target Viewer: /targets (Pass: HUNTERTORIKUL)                  ║
+    ║     ✅ Squad Auto-Join: 5 hours                                  ║
+    ║     ✅ File Manager: Download/Upload targets.txt & squad_data.json   ║
+    ║     ✅ Squad Leader Management: View & Cleanup expired               ║
+    ║     ✅ Target Viewer: /targets (Pass: HUNTERMAHIR)                  ║
     ║                                                                      ║
     ║     🌐 Web Panel: http://127.0.0.1:8080                             ║
-    ║     🔑 Admin Pass: TORIKULJOD                                         ║
-    ║     🎯 Target Pass: HUNTERTORIKUL                                     ║
-    ║     👑 Developer: TORIKUL                                             ║
+    ║     🔑 Admin Pass: MAHIRJOD                                         ║
+    ║     🎯 Target Pass: HUNTERMAHIR                                     ║
+    ║     👑 Developer: MAHIR                                             ║
     ╚══════════════════════════════════════════════════════════════════════╝
     {RS}
     """)
@@ -3439,20 +3921,16 @@ def main():
     status_thread.start()
     print(f"{G}✅ Status checker thread started (every {STATUS_CHECK_INTERVAL}s){RS}")
 
-    # ২. অটো রিসেট থ্রেড চালু করা (প্রতি ১০ মিনিটে)
-    reset_thread = Thread(target=auto_reset_accounts, daemon=True)
-    reset_thread.start()
-
-    # ৩. প্রথমবার একাউন্ট রান করা
+    # ২. প্রথমবার একাউন্ট রান করা
     Thread(target=run_accounts, daemon=True).start()
 
-    # ৪. কিছুক্ষণ অপেক্ষা করে বাকি টার্গেটগুলো লোড করা
+    # ৩. কিছুক্ষণ অপেক্ষা করে বাকি টার্গেটগুলো লোড করা
     time.sleep(1)
     clean_and_load_squad_targets()
     load_saved_targets()
 
     port = int(os.environ.get("PORT", 8080))
-    # ৫. ফ্লাস্ক অ্যাপ রান করা
+    # ৪. ফ্লাস্ক অ্যাপ রান করা
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
 
 if __name__ == "__main__":
